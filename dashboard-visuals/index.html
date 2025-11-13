@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trustless Data Infrastructure - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .card-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge.success {
+            background: #10b981;
+            color: white;
+        }
+
+        .badge.warning {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .badge.error {
+            background: #ef4444;
+            color: white;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            font-weight: 500;
+            color: #666;
+        }
+
+        .metric-value {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .chart-container {
+            height: 200px;
+            margin-top: 15px;
+            position: relative;
+            background: linear-gradient(180deg, rgba(102, 126, 234, 0.1) 0%, transparent 100%);
+            border-radius: 10px;
+            padding: 10px;
+        }
+
+        .price-display {
+            font-size: 3em;
+            font-weight: 700;
+            color: #667eea;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .sources {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+
+        .source-chip {
+            padding: 8px 15px;
+            background: #f3f4f6;
+            border-radius: 20px;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .source-chip .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+        }
+
+        .alert-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .alert-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            border-radius: 5px;
+        }
+
+        .alert-item.critical {
+            background: #fee2e2;
+            border-left-color: #ef4444;
+        }
+
+        .alert-item.low {
+            background: #dbeafe;
+            border-left-color: #3b82f6;
+        }
+
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .alert-message {
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .refresh-btn {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d3;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        input, select {
+            padding: 10px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .stat-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-bottom: 20px;
+        }
+
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -23px;
+            top: 0;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #667eea;
+        }
+
+        .timeline-item::after {
+            content: '';
+            position: absolute;
+            left: -18px;
+            top: 12px;
+            width: 2px;
+            height: 100%;
+            background: #e5e7eb;
+        }
+
+        .timeline-item:last-child::after {
+            display: none;
+        }
+
+        .timestamp {
+            font-size: 0.85em;
+            color: #999;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌐 Trustless Data Infrastructure</h1>
+            <div class="subtitle">Real-time Oracle & DeFi Analytics Dashboard</div>
+        </header>
+
+        <div class="controls">
+            <input type="text" id="tokenInput" placeholder="Token Symbol (e.g., ETH)" value="ETH">
+            <select id="chainSelect">
+                <option value="ethereum">Ethereum</option>
+                <option value="polygon">Polygon</option>
+                <option value="arbitrum">Arbitrum</option>
+                <option value="optimism">Optimism</option>
+                <option value="base">Base</option>
+            </select>
+            <button class="refresh-btn" onclick="refreshData()">🔄 Refresh All</button>
+        </div>
+
+        <div class="grid">
+            <!-- Oracle Price Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📊 Oracle Price Feed</span>
+                    <span class="badge success" id="oracleStatus">LIVE</span>
+                </div>
+                <div id="priceDisplay" class="price-display">--.--</div>
+                <div class="metric">
+                    <span class="metric-label">Confidence</span>
+                    <span class="metric-value" id="confidence">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Std Deviation</span>
+                    <span class="metric-value" id="stdDev">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Sources</span>
+                    <span class="metric-value" id="sourceCount">--</span>
+                </div>
+                <div class="sources" id="sourcesContainer"></div>
+            </div>
+
+            <!-- Chain Analytics Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">⛓️ Chain Analytics</span>
+                    <span class="badge success">SYNCED</span>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Block Height</div>
+                        <div class="stat-value" id="blockHeight">--</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Transactions</div>
+                        <div class="stat-value" id="txCount">--</div>
+                    </div>
+                </div>
+                <div class="metric" style="margin-top: 15px;">
+                    <span class="metric-label">Gas Used</span>
+                    <span class="metric-value" id="gasUsed">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Base Fee</span>
+                    <span class="metric-value" id="baseFee">--</span>
+                </div>
+            </div>
+
+            <!-- DeFi Protocols Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🏦 DeFi Protocols</span>
+                    <span class="badge success">ACTIVE</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Uniswap Volume</span>
+                    <span class="metric-value" id="uniswapVolume">$--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Aave TVL</span>
+                    <span class="metric-value" id="aaveTVL">$--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Compound TVL</span>
+                    <span class="metric-value" id="compoundTVL">$--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Curve TVL</span>
+                    <span class="metric-value" id="curveTVL">$--</span>
+                </div>
+            </div>
+
+            <!-- Anomaly Alerts Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">⚠️ Anomaly Alerts</span>
+                    <span class="badge warning" id="alertBadge">0 ACTIVE</span>
+                </div>
+                <div class="alert-list" id="alertList">
+                    <div class="loading">No anomalies detected</div>
+                </div>
+            </div>
+
+            <!-- Slashing Events Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">⚔️ Slashing Events</span>
+                    <span class="badge error" id="slashBadge">0 EVENTS</span>
+                </div>
+                <div class="timeline" id="slashingTimeline">
+                    <div class="loading">No slashing events</div>
+                </div>
+            </div>
+
+            <!-- System Health Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">💚 System Health</span>
+                    <span class="badge success">HEALTHY</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">API Status</span>
+                    <span class="metric-value" id="apiStatus">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Uptime</span>
+                    <span class="metric-value" id="uptime">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Version</span>
+                    <span class="metric-value" id="version">--</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Last Update</span>
+                    <span class="metric-value" id="lastUpdate">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000';
+        let autoRefresh = null;
+
+        // Format numbers
+        function formatNumber(num) {
+            if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+            if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+            if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+            return num.toFixed(2);
+        }
+
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return `${hours}h ${minutes}m`;
+        }
+
+        // Fetch oracle data
+        async function fetchOracleData() {
+            const token = document.getElementById('tokenInput').value || 'ETH';
+            try {
+                const response = await fetch(`${API_BASE}/api/oracle/price/${token}?chainlink=0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419`);
+                if (!response.ok) throw new Error('Failed to fetch oracle data');
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('priceDisplay').textContent = `$${data.data.price.toFixed(2)}`;
+                    document.getElementById('confidence').textContent = `${(data.data.confidence * 100).toFixed(1)}%`;
+                    document.getElementById('stdDev').textContent = `$${data.data.stdDev.toFixed(2)}`;
+                    document.getElementById('sourceCount').textContent = data.data.sources.length;
+
+                    // Update sources
+                    const sourcesContainer = document.getElementById('sourcesContainer');
+                    sourcesContainer.innerHTML = data.data.sources.map(s => `
+                        <div class="source-chip">
+                            <span class="dot"></span>
+                            ${s.source}: $${s.price.toFixed(2)}
+                        </div>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Oracle error:', error);
+                document.getElementById('oracleStatus').textContent = 'ERROR';
+                document.getElementById('oracleStatus').className = 'badge error';
+            }
+        }
+
+        // Fetch chain analytics
+        async function fetchChainAnalytics() {
+            const chain = document.getElementById('chainSelect').value;
+            try {
+                const response = await fetch(`${API_BASE}/api/analytics/summary/${chain}`);
+                if (!response.ok) throw new Error('Failed to fetch analytics');
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('blockHeight').textContent = formatNumber(data.data.block);
+                    document.getElementById('txCount').textContent = formatNumber(data.data.transactions);
+                    document.getElementById('gasUsed').textContent = formatNumber(parseInt(data.data.gasUsed || 0));
+
+                    // Update protocol data
+                    const protocols = data.data.protocols;
+                    if (protocols.uniswap) {
+                        document.getElementById('uniswapVolume').textContent = `$${formatNumber(protocols.uniswap.volume)}`;
+                    }
+                    if (protocols.aave) {
+                        document.getElementById('aaveTVL').textContent = `$${formatNumber(protocols.aave.tvl)}`;
+                    }
+                    if (protocols.compound) {
+                        document.getElementById('compoundTVL').textContent = `$${formatNumber(protocols.compound.tvl)}`;
+                    }
+                    if (protocols.curve) {
+                        document.getElementById('curveTVL').textContent = `$${formatNumber(protocols.curve.tvl)}`;
+                    }
+                }
+            } catch (error) {
+                console.error('Analytics error:', error);
+            }
+        }
+
+        // Fetch system health
+        async function fetchSystemHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (!response.ok) throw new Error('Health check failed');
+                const data = await response.json();
+
+                document.getElementById('apiStatus').textContent = data.status.toUpperCase();
+                document.getElementById('uptime').textContent = formatTime(data.uptime);
+                document.getElementById('version').textContent = data.version;
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Health check error:', error);
+                document.getElementById('apiStatus').textContent = 'OFFLINE';
+            }
+        }
+
+        // Simulate anomaly alerts (since ML service requires Python)
+        function simulateAnomalies() {
+            const alerts = [
+                {
+                    severity: 'low',
+                    feed: 'ETH/USD',
+                    score: 0.87,
+                    message: 'Minor price deviation detected'
+                },
+                {
+                    severity: 'warning',
+                    feed: 'BTC/USD',
+                    score: 0.92,
+                    message: 'High volatility detected'
+                }
+            ];
+
+            const alertList = document.getElementById('alertList');
+            if (alerts.length === 0) {
+                alertList.innerHTML = '<div class="loading">No anomalies detected</div>';
+                return;
+            }
+
+            alertList.innerHTML = alerts.map(alert => `
+                <div class="alert-item ${alert.severity}">
+                    <div class="alert-header">
+                        <span>${alert.feed}</span>
+                        <span>${(alert.score * 100).toFixed(0)}%</span>
+                    </div>
+                    <div class="alert-message">${alert.message}</div>
+                </div>
+            `).join('');
+
+            document.getElementById('alertBadge').textContent = `${alerts.length} ACTIVE`;
+        }
+
+        // Refresh all data
+        async function refreshData() {
+            await fetchOracleData();
+            await fetchChainAnalytics();
+            await fetchSystemHealth();
+            simulateAnomalies();
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshData();
+            // Auto-refresh every 30 seconds
+            autoRefresh = setInterval(refreshData, 30000);
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (autoRefresh) clearInterval(autoRefresh);
+        });
+    </script>
+</body>
+</html>
