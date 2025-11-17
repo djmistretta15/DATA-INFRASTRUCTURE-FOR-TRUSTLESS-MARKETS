@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reclaim-oracle
+  labels:
+    app.kubernetes.io/name: reclaim-oracle
+    app.kubernetes.io/part-of: oracle-infrastructure
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oracle-config
+  namespace: reclaim-oracle
+data:
+  # Database Configuration
+  DATABASE_HOST: "timescaledb-service"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "reclaim_oracle"
+
+  # Redis Configuration
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+
+  # API Configuration
+  API_PORT: "3000"
+  GRAPHQL_PORT: "4000"
+  WEBSOCKET_PORT: "8080"
+
+  # Oracle Configuration
+  ORACLE_MIN_SOURCES: "5"
+  ORACLE_DEVIATION_THRESHOLD: "500"
+  ORACLE_AGGREGATION_INTERVAL: "60"
+
+  # ML Configuration
+  ML_MODEL_PATH: "/models"
+  ML_CONTAMINATION: "0.05"
+  ML_RETRAIN_INTERVAL: "86400"
+
+  # Monitoring
+  PROMETHEUS_PORT: "9090"
+  GRAFANA_PORT: "3001"
+
+  # Feature Flags
+  ENABLE_ZK_VERIFICATION: "true"
+  ENABLE_MEV_PROTECTION: "true"
+  ENABLE_CIRCUIT_BREAKER: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oracle-secrets
+  namespace: reclaim-oracle
+type: Opaque
+stringData:
+  DATABASE_PASSWORD: "changeme-in-production"
+  REDIS_PASSWORD: "changeme-in-production"
+  JWT_SECRET: "changeme-in-production-256bit-key"
+  TELEGRAM_BOT_TOKEN: ""
+  SLACK_WEBHOOK_URL: ""
+  ALERT_WEBHOOK_SECRET: "changeme-in-production"
+  ETHEREUM_RPC_KEY: ""
+  POLYGON_RPC_KEY: ""
+  ARBITRUM_RPC_KEY: ""

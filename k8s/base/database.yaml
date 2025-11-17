@@ -1,0 +1,211 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: timescaledb
+  namespace: reclaim-oracle
+spec:
+  serviceName: timescaledb-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timescaledb
+  template:
+    metadata:
+      labels:
+        app: timescaledb
+    spec:
+      containers:
+        - name: timescaledb
+          image: timescale/timescaledb:latest-pg15
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: oracle-config
+                  key: DATABASE_NAME
+            - name: POSTGRES_USER
+              value: "reclaim"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secrets
+                  key: DATABASE_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: timescale-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "8Gi"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - reclaim
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - reclaim
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: timescaledb-init
+  volumeClaimTemplates:
+    - metadata:
+        name: timescale-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: timescaledb-service
+  namespace: reclaim-oracle
+spec:
+  selector:
+    app: timescaledb
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: timescaledb-init
+  namespace: reclaim-oracle
+data:
+  init.sql: |
+    -- Enable TimescaleDB extension
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    -- Create hypertables for time-series data
+    -- These will be created by Prisma migrations, but we set up the extension
+
+    -- Performance tuning
+    ALTER SYSTEM SET shared_buffers = '2GB';
+    ALTER SYSTEM SET effective_cache_size = '6GB';
+    ALTER SYSTEM SET maintenance_work_mem = '512MB';
+    ALTER SYSTEM SET checkpoint_completion_target = 0.9;
+    ALTER SYSTEM SET wal_buffers = '16MB';
+    ALTER SYSTEM SET default_statistics_target = 100;
+    ALTER SYSTEM SET random_page_cost = 1.1;
+    ALTER SYSTEM SET effective_io_concurrency = 200;
+    ALTER SYSTEM SET work_mem = '10MB';
+    ALTER SYSTEM SET min_wal_size = '1GB';
+    ALTER SYSTEM SET max_wal_size = '4GB';
+    ALTER SYSTEM SET max_worker_processes = 8;
+    ALTER SYSTEM SET max_parallel_workers_per_gather = 4;
+    ALTER SYSTEM SET max_parallel_workers = 8;
+    ALTER SYSTEM SET max_parallel_maintenance_workers = 4;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: reclaim-oracle
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          command:
+            - redis-server
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            - --maxmemory
+            - 2gb
+            - --maxmemory-policy
+            - allkeys-lru
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secrets
+                  key: REDIS_PASSWORD
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "3Gi"
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: reclaim-oracle
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: reclaim-oracle
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

@@ -1,0 +1,355 @@
+groups:
+  - name: oracle_infrastructure_alerts
+    rules:
+      # API Health Alerts
+      - alert: OracleAPIHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="oracle-api"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High API latency detected"
+          description: "95th percentile API latency is {{ $value }}s, exceeding 2s threshold"
+
+      - alert: OracleAPIHighErrorRate
+        expr: rate(http_requests_total{job="oracle-api",status=~"5.."}[5m]) / rate(http_requests_total{job="oracle-api"}[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High API error rate"
+          description: "API error rate is {{ $value | humanizePercentage }}, exceeding 5%"
+
+      - alert: OracleAPIDown
+        expr: up{job="oracle-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Oracle API is down"
+          description: "Oracle API instance {{ $labels.instance }} is not responding"
+
+      # Database Alerts
+      - alert: TimescaleDBHighConnections
+        expr: pg_stat_activity_count{datname="reclaim_oracle"} / pg_settings_max_connections * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High database connection usage"
+          description: "Database connections at {{ $value | humanize }}% of maximum"
+
+      - alert: TimescaleDBHighQueryTime
+        expr: pg_stat_activity_max_tx_duration{datname="reclaim_oracle"} > 300
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Long running database query"
+          description: "Query running for {{ $value | humanizeDuration }}"
+
+      - alert: TimescaleDBReplicationLag
+        expr: pg_replication_lag > 60
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "High database replication lag"
+          description: "Replication lag is {{ $value | humanizeDuration }}"
+
+      - alert: TimescaleDBDiskUsageHigh
+        expr: (pg_database_size_bytes{datname="reclaim_oracle"} / (100 * 1024 * 1024 * 1024)) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Database disk usage high"
+          description: "Database is using {{ $value | humanize }}% of allocated storage"
+
+      # Redis Alerts
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team: cache
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis using {{ $value | humanize }}% of max memory"
+
+      - alert: RedisConnectionsExhausted
+        expr: redis_connected_clients / redis_connected_clients_max * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          team: cache
+        annotations:
+          summary: "Redis connections nearly exhausted"
+          description: "Redis connections at {{ $value | humanize }}%"
+
+      - alert: RedisSlowCommands
+        expr: rate(redis_slowlog_length[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: cache
+        annotations:
+          summary: "High rate of slow Redis commands"
+          description: "{{ $value }} slow commands per second"
+
+      # Oracle Feed Alerts
+      - alert: OracleFeedStale
+        expr: time() - oracle_last_update_timestamp > 300
+        for: 5m
+        labels:
+          severity: critical
+          team: oracle
+        annotations:
+          summary: "Oracle feed is stale"
+          description: "No updates for {{ $value | humanizeDuration }} on {{ $labels.token_id }}"
+
+      - alert: OracleHighDeviation
+        expr: oracle_price_deviation_percent > 5
+        for: 1m
+        labels:
+          severity: high
+          team: oracle
+        annotations:
+          summary: "High price deviation detected"
+          description: "Price deviation of {{ $value }}% on {{ $labels.token_id }}"
+
+      - alert: OracleLowSourceCount
+        expr: oracle_source_count < 3
+        for: 2m
+        labels:
+          severity: critical
+          team: oracle
+        annotations:
+          summary: "Insufficient oracle sources"
+          description: "Only {{ $value }} sources for {{ $labels.token_id }}"
+
+      - alert: OracleSlashingEvent
+        expr: increase(oracle_slashing_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: oracle
+        annotations:
+          summary: "Oracle slashing event occurred"
+          description: "{{ $value }} slashing events in the last hour"
+
+      # Anomaly Detection Alerts
+      - alert: HighAnomalyRate
+        expr: rate(anomaly_detected_total{severity="CRITICAL"}[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          team: ml
+        annotations:
+          summary: "High rate of critical anomalies"
+          description: "{{ $value }} critical anomalies per second detected"
+
+      - alert: MLModelInferenceError
+        expr: rate(model_inference_total{status="error"}[5m]) > 0.01
+        for: 3m
+        labels:
+          severity: warning
+          team: ml
+        annotations:
+          summary: "ML model inference errors"
+          description: "Model inference error rate: {{ $value }} per second"
+
+      - alert: MLModelHighLatency
+        expr: histogram_quantile(0.95, rate(model_inference_latency_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: ml
+        annotations:
+          summary: "High ML inference latency"
+          description: "95th percentile inference latency: {{ $value }}s"
+
+      - alert: NoActiveModels
+        expr: active_models_count == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: ml
+        annotations:
+          summary: "No ML models loaded"
+          description: "No active models available for inference"
+
+      # Indexer Alerts
+      - alert: IndexerLagHigh
+        expr: indexer_block_lag > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: indexer
+        annotations:
+          summary: "Indexer falling behind"
+          description: "Indexer is {{ $value }} blocks behind on {{ $labels.chain }}"
+
+      - alert: IndexerEventProcessingError
+        expr: rate(indexer_events_error_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+          team: indexer
+        annotations:
+          summary: "Indexer event processing errors"
+          description: "{{ $value }} errors per second on {{ $labels.chain }}"
+
+      - alert: LiquidationDetected
+        expr: increase(liquidation_events_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: defi
+        annotations:
+          summary: "Liquidation event detected"
+          description: "{{ $value }} liquidations in the last hour on {{ $labels.protocol }}"
+
+      - alert: LowHealthFactorPositions
+        expr: count(lending_position_health_factor < 1.1) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: defi
+        annotations:
+          summary: "Multiple at-risk lending positions"
+          description: "{{ $value }} positions with health factor < 1.1"
+
+      # Circuit Breaker Alerts
+      - alert: CircuitBreakerTripped
+        expr: circuit_breaker_state == 1
+        for: 0m
+        labels:
+          severity: critical
+          team: oracle
+        annotations:
+          summary: "Circuit breaker activated"
+          description: "Circuit breaker tripped for {{ $labels.token_id }}"
+
+      - alert: CircuitBreakerHalfOpen
+        expr: circuit_breaker_state == 2
+        for: 0m
+        labels:
+          severity: warning
+          team: oracle
+        annotations:
+          summary: "Circuit breaker in half-open state"
+          description: "Circuit breaker testing for {{ $labels.token_id }}"
+
+      # Infrastructure Alerts
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{namespace="reclaim-oracle"}[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage at {{ $value }}% for {{ $labels.pod }}"
+
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes{namespace="reclaim-oracle"} / container_spec_memory_limit_bytes * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage at {{ $value }}% for {{ $labels.pod }}"
+
+      - alert: PodRestarts
+        expr: increase(kube_pod_container_status_restarts_total{namespace="reclaim-oracle"}[1h]) > 3
+        for: 0m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Pod restart loop"
+          description: "Pod {{ $labels.pod }} restarted {{ $value }} times in the last hour"
+
+      - alert: PersistentVolumeFillingUp
+        expr: kubelet_volume_stats_used_bytes{namespace="reclaim-oracle"} / kubelet_volume_stats_capacity_bytes * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Persistent volume filling up"
+          description: "Volume {{ $labels.persistentvolumeclaim }} is {{ $value }}% full"
+
+      # WebSocket Alerts
+      - alert: WebSocketConnectionsHigh
+        expr: websocket_active_connections > 5000
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High number of WebSocket connections"
+          description: "{{ $value }} active WebSocket connections"
+
+      - alert: WebSocketMessageQueueBacklog
+        expr: websocket_message_queue_size > 10000
+        for: 3m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "WebSocket message queue backlog"
+          description: "{{ $value }} messages in queue"
+
+  - name: oracle_slos
+    rules:
+      # Service Level Objectives
+      - record: oracle_api_availability
+        expr: avg_over_time(up{job="oracle-api"}[1d])
+
+      - record: oracle_api_error_budget_remaining
+        expr: 1 - (rate(http_requests_total{job="oracle-api",status=~"5.."}[30d]) / rate(http_requests_total{job="oracle-api"}[30d])) / 0.001
+        # 99.9% availability SLO
+
+      - record: oracle_feed_freshness_slo
+        expr: (count(time() - oracle_last_update_timestamp < 60) / count(oracle_last_update_timestamp)) * 100
+        # Percentage of feeds updated in last 60 seconds
+
+      - alert: SLOViolation_Availability
+        expr: oracle_api_availability < 0.999
+        for: 1h
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "SLO violation: API availability"
+          description: "API availability {{ $value | humanizePercentage }} is below 99.9% SLO"
+
+      - alert: SLOViolation_ErrorBudget
+        expr: oracle_api_error_budget_remaining < 0.25
+        for: 1h
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "SLO violation: Error budget nearly exhausted"
+          description: "Only {{ $value | humanizePercentage }} of error budget remaining"
+
+      - alert: SLOViolation_FeedFreshness
+        expr: oracle_feed_freshness_slo < 95
+        for: 10m
+        labels:
+          severity: critical
+          team: oracle
+        annotations:
+          summary: "SLO violation: Feed freshness"
+          description: "Only {{ $value }}% of feeds are fresh (< 60s old)"

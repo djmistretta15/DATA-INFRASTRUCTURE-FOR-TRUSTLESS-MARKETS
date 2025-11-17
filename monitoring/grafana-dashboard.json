@@ -1,0 +1,305 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Reclaim Oracle Infrastructure",
+    "tags": ["oracle", "defi", "infrastructure"],
+    "timezone": "browser",
+    "schemaVersion": 30,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Health Overview",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "sum(up{namespace=\"reclaim-oracle\"})",
+            "legendFormat": "Services Up"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "horizontal",
+          "reduceOptions": { "calcs": ["lastNotNull"] }
+        }
+      },
+      {
+        "id": 2,
+        "title": "API Request Rate",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{job=\"oracle-api\"}[5m])) by (status)",
+            "legendFormat": "Status {{status}}"
+          }
+        ],
+        "yaxes": [{ "format": "reqps", "label": "Requests/s" }]
+      },
+      {
+        "id": 3,
+        "title": "API Latency (p95)",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"oracle-api\"}[5m]))",
+            "legendFormat": "p95 Latency"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"oracle-api\"}[5m]))",
+            "legendFormat": "p99 Latency"
+          }
+        ],
+        "yaxes": [{ "format": "s", "label": "Latency" }]
+      },
+      {
+        "id": 4,
+        "title": "Oracle Feed Updates",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+        "targets": [
+          {
+            "expr": "sum(rate(oracle_submissions_total[5m])) by (token_id)",
+            "legendFormat": "{{token_id}}"
+          }
+        ],
+        "yaxes": [{ "format": "ops", "label": "Updates/s" }]
+      },
+      {
+        "id": 5,
+        "title": "Price Deviation",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+        "targets": [
+          {
+            "expr": "oracle_price_deviation_percent",
+            "legendFormat": "{{token_id}}"
+          }
+        ],
+        "yaxes": [{ "format": "percent", "label": "Deviation %" }],
+        "thresholds": [
+          { "value": 5, "colorMode": "warning", "op": "gt" },
+          { "value": 10, "colorMode": "critical", "op": "gt" }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Anomaly Detection",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+        "targets": [
+          {
+            "expr": "sum(rate(anomaly_detected_total[5m])) by (severity)",
+            "legendFormat": "{{severity}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "bars",
+              "fillOpacity": 80
+            }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "ML Model Inference",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+        "targets": [
+          {
+            "expr": "sum(rate(model_inference_total{status=\"success\"}[5m]))",
+            "legendFormat": "Successful Inferences"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(model_inference_latency_seconds_bucket[5m]))",
+            "legendFormat": "p95 Latency"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Database Performance",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+        "targets": [
+          {
+            "expr": "pg_stat_activity_count{datname=\"reclaim_oracle\"}",
+            "legendFormat": "Active Connections"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_fetched{datname=\"reclaim_oracle\"}[5m])",
+            "legendFormat": "Rows Fetched/s"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Redis Performance",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+        "targets": [
+          {
+            "expr": "redis_memory_used_bytes / 1024 / 1024 / 1024",
+            "legendFormat": "Memory Used (GB)"
+          },
+          {
+            "expr": "rate(redis_commands_processed_total[5m])",
+            "legendFormat": "Commands/s"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Circuit Breaker Status",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 0, "y": 36 },
+        "targets": [
+          {
+            "expr": "sum(circuit_breaker_state == 1)",
+            "legendFormat": "Open"
+          }
+        ],
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 1, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "Active Oracle Sources",
+        "type": "gauge",
+        "gridPos": { "h": 4, "w": 8, "x": 8, "y": 36 },
+        "targets": [
+          {
+            "expr": "min(oracle_source_count)",
+            "legendFormat": "Min Sources"
+          }
+        ],
+        "options": {
+          "orientation": "auto",
+          "showThresholdLabels": false
+        },
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 10,
+            "thresholds": {
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 3, "color": "yellow" },
+                { "value": 5, "color": "green" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 12,
+        "title": "WebSocket Connections",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 16, "y": 36 },
+        "targets": [
+          {
+            "expr": "sum(websocket_active_connections)",
+            "legendFormat": "Active"
+          }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "Lending Protocol Health",
+        "type": "table",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+        "targets": [
+          {
+            "expr": "count(lending_position_health_factor < 1.1) by (protocol)",
+            "legendFormat": "At Risk ({{protocol}})",
+            "format": "table",
+            "instant": true
+          }
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Recent Liquidations",
+        "type": "stat",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+        "targets": [
+          {
+            "expr": "sum(increase(liquidation_events_total[24h]))",
+            "legendFormat": "24h Liquidations"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area"
+        }
+      },
+      {
+        "id": 15,
+        "title": "Pod Resource Usage",
+        "type": "graph",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+        "targets": [
+          {
+            "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"reclaim-oracle\"}[5m])) by (pod)",
+            "legendFormat": "CPU {{pod}}"
+          }
+        ],
+        "yaxes": [{ "format": "percentunit", "label": "CPU Usage" }]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "datasource",
+          "type": "datasource",
+          "query": "prometheus",
+          "current": { "selected": true, "text": "Prometheus", "value": "Prometheus" }
+        },
+        {
+          "name": "token_id",
+          "type": "query",
+          "query": "label_values(oracle_submissions_total, token_id)",
+          "multi": true,
+          "includeAll": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertstate=\"firing\"}",
+          "iconColor": "red",
+          "name": "Alerts",
+          "titleFormat": "{{alertname}}"
+        }
+      ]
+    },
+    "time": { "from": "now-6h", "to": "now" },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
+    }
+  }
+}
