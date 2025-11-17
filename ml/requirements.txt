@@ -1,0 +1,68 @@
+# ML Pipeline Requirements
+# Production-grade dependencies for oracle anomaly detection
+
+# Core ML Libraries
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0,<3.0.0
+scikit-learn>=1.3.0,<2.0.0
+scipy>=1.11.0,<2.0.0
+
+# Statistical Analysis
+statsmodels>=0.14.0,<1.0.0
+
+# Model Serialization
+joblib>=1.3.0,<2.0.0
+
+# Web Framework
+fastapi>=0.104.0,<1.0.0
+uvicorn[standard]>=0.24.0,<1.0.0
+pydantic>=2.0.0,<3.0.0
+
+# Async Support
+asyncio-redis>=0.16.0
+redis>=5.0.0,<6.0.0
+aiohttp>=3.9.0,<4.0.0
+
+# Database
+asyncpg>=0.29.0,<1.0.0
+psycopg2-binary>=2.9.0,<3.0.0
+sqlalchemy>=2.0.0,<3.0.0
+
+# Monitoring & Metrics
+prometheus-client>=0.18.0,<1.0.0
+prometheus-fastapi-instrumentator>=6.1.0,<7.0.0
+
+# Logging
+structlog>=23.2.0,<24.0.0
+python-json-logger>=2.0.0,<3.0.0
+
+# Configuration
+python-dotenv>=1.0.0,<2.0.0
+pyyaml>=6.0.0,<7.0.0
+
+# AWS Integration
+boto3>=1.29.0,<2.0.0
+botocore>=1.32.0,<2.0.0
+
+# HTTP Client
+httpx>=0.25.0,<1.0.0
+requests>=2.31.0,<3.0.0
+
+# Data Validation
+cerberus>=1.3.0,<2.0.0
+marshmallow>=3.20.0,<4.0.0
+
+# Time Series
+pytz>=2023.3
+python-dateutil>=2.8.0,<3.0.0
+
+# Type Hints
+typing-extensions>=4.8.0,<5.0.0
+
+# Development & Testing (optional for prod image)
+# pytest>=7.4.0,<8.0.0
+# pytest-asyncio>=0.21.0,<1.0.0
+# pytest-cov>=4.1.0,<5.0.0
+# black>=23.10.0,<24.0.0
+# flake8>=6.1.0,<7.0.0
+# mypy>=1.6.0,<2.0.0

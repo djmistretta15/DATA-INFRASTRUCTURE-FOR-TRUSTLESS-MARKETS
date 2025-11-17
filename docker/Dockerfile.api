@@ -1,0 +1,101 @@
+# Multi-stage production Dockerfile for Oracle API
+# Optimized for security, size, and performance
+
+# Stage 1: Dependencies
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# Install build dependencies for native modules
+RUN apk add --no-cache python3 make g++ git
+
+# Copy package files
+COPY package*.json ./
+COPY prisma ./prisma/
+
+# Install all dependencies (including devDependencies for build)
+RUN npm ci --include=dev
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Stage 2: Builder
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package*.json ./
+
+# Copy source code
+COPY src ./src
+COPY tsconfig.json ./
+COPY prisma ./prisma/
+
+# Build TypeScript
+RUN npm run build
+
+# Remove dev dependencies and rebuild for production
+RUN npm prune --production
+
+# Stage 3: Runtime
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+# Security: Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S oracle -u 1001 -G nodejs
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    dumb-init \
+    curl \
+    ca-certificates \
+    tzdata
+
+# Copy built application
+COPY --from=builder --chown=oracle:nodejs /app/dist ./dist
+COPY --from=builder --chown=oracle:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=oracle:nodejs /app/package.json ./
+COPY --from=deps --chown=oracle:nodejs /app/prisma ./prisma
+COPY --from=deps --chown=oracle:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+
+# Create necessary directories with correct permissions
+RUN mkdir -p /app/logs /app/tmp /app/data && \
+    chown -R oracle:nodejs /app
+
+# Build arguments for versioning
+ARG VERSION=unknown
+ARG BUILD_DATE=unknown
+ARG GIT_COMMIT=unknown
+
+# Labels for container metadata
+LABEL org.opencontainers.image.title="Oracle API Server" \
+      org.opencontainers.image.description="Production API server for oracle price feeds" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.vendor="Oracle Infrastructure" \
+      org.opencontainers.image.source="https://github.com/org/oracle-infrastructure"
+
+# Environment variables
+ENV NODE_ENV=production \
+    PORT=3000 \
+    TZ=UTC \
+    NODE_OPTIONS="--max-old-space-size=2048 --enable-source-maps" \
+    VERSION=${VERSION}
+
+# Health check configuration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:${PORT}/v1/health || exit 1
+
+# Switch to non-root user
+USER oracle
+
+# Expose port
+EXPOSE 3000
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start application
+CMD ["node", "dist/api/server.js"]
