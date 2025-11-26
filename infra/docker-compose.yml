@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # n8n - Workflow Orchestration Engine
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: gpu-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - NODE_ENV=production
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=${TIMEZONE:-America/New_York}
+      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-changeme}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/initial-flows.json:/home/node/.n8n/initial-flows.json:ro
+    depends_on:
+      - redis
+    networks:
+      - gpu-network
+
+  # Redis - Cache & Rate Limiting
+  redis:
+    image: redis:7-alpine
+    container_name: gpu-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - gpu-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Price Engine - GPU Quote API
+  price-engine:
+    build:
+      context: ../price-engine
+      dockerfile: Dockerfile
+    container_name: gpu-price-engine
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - WORKERS=4
+      # Provider API Keys (TODO: set these in .env)
+      - SALAD_API_KEY=${SALAD_API_KEY:-}
+      - VAST_API_KEY=${VAST_API_KEY:-}
+      - HYPERSTACK_API_KEY=${HYPERSTACK_API_KEY:-}
+      - RUNPOD_API_KEY=${RUNPOD_API_KEY:-}
+      - LAMBDA_API_KEY=${LAMBDA_API_KEY:-}
+      # Pricing config
+      - BASE_MARGIN_PCT=${BASE_MARGIN_PCT:-15}
+      - SURGE_ENABLED=${SURGE_ENABLED:-false}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-60}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gpu-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Uptime Kuma - Monitoring
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: gpu-uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    networks:
+      - gpu-network
+
+volumes:
+  n8n_data:
+    driver: local
+  redis_data:
+    driver: local
+  uptime_kuma_data:
+    driver: local
+
+networks:
+  gpu-network:
+    driver: bridge
