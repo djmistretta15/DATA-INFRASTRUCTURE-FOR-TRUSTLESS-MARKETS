@@ -80,6 +80,33 @@ services:
       timeout: 10s
       retries: 3
 
+  # PyFlow Service - Prefect Workflows
+  pyflow:
+    build:
+      context: ../pyflow-service
+      dockerfile: Dockerfile
+    container_name: gpu-pyflow
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PRICE_ENGINE_URL=http://price-engine:8000
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      price-engine:
+        condition: service_healthy
+    networks:
+      - gpu-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # Uptime Kuma - Monitoring
   uptime-kuma:
     image: louislam/uptime-kuma:1

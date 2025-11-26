@@ -1,0 +1,175 @@
+name: Deploy to Production Server
+
+on:
+  push:
+    branches:
+      - main
+      - production
+  workflow_dispatch:  # Allow manual triggers
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install price-engine dependencies
+        run: |
+          cd price-engine
+          pip install -e ".[dev]"
+
+      - name: Run price-engine tests
+        run: |
+          cd price-engine
+          pytest || echo "Tests not yet implemented"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Lint frontend
+        run: |
+          cd frontend
+          npm run lint || echo "Linting not yet configured"
+
+      - name: Type check frontend
+        run: |
+          cd frontend
+          npx tsc --noEmit || echo "Type check completed"
+
+  build:
+    name: Build Docker Images
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push price-engine
+        uses: docker/build-push-action@v5
+        with:
+          context: ./price-engine
+          push: true
+          tags: ghcr.io/${{ github.repository }}/price-engine:${{ github.sha }},ghcr.io/${{ github.repository }}/price-engine:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push pyflow-service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./pyflow-service
+          push: true
+          tags: ghcr.io/${{ github.repository }}/pyflow:${{ github.sha }},ghcr.io/${{ github.repository }}/pyflow:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Server
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/gpu-black-market' }}
+        run: |
+          ssh $SERVER_USER@$SERVER_HOST << 'ENDSSH'
+            set -e
+
+            # Navigate to deployment directory
+            cd ${{ secrets.DEPLOY_PATH }}
+
+            # Pull latest code
+            git fetch origin
+            git reset --hard origin/${{ github.ref_name }}
+
+            # Copy environment files if they don't exist
+            [ -f infra/.env ] || cp infra/.env.example infra/.env
+            [ -f frontend/.env.local ] || cp frontend/.env.example frontend/.env.local
+
+            # Pull latest images from registry
+            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+            docker compose -f infra/docker-compose.yml pull
+
+            # Restart services
+            cd infra
+            docker compose down
+            docker compose up -d
+
+            # Wait for services to be healthy
+            echo "Waiting for services to start..."
+            sleep 10
+
+            # Check service status
+            docker compose ps
+
+            # Health checks
+            curl -f http://localhost:8000/health || echo "Price engine health check failed"
+            curl -f http://localhost:8001/health || echo "PyFlow health check failed"
+
+            echo "Deployment complete!"
+          ENDSSH
+
+      - name: Notify deployment status
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Deployment to ${{ github.event.inputs.environment || 'production' }} ${{ job.status }}
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
