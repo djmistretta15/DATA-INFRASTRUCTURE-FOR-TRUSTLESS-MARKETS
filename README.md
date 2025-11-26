@@ -1,6 +1,8 @@
-# GPU Black Market 2.0
+# GP4U-Mk-2 (GPUs For You - Mark 2)
 
 A GPU rental arbitrage platform that aggregates pricing from multiple providers, applies dynamic margins, and enables streamers to earn commissions through referrals.
+
+> **Note:** This is the production-ready version with modular n8n workflows, PyFlow automation, and full CI/CD.
 
 ## Architecture Overview
 
@@ -50,8 +52,8 @@ A GPU rental arbitrage platform that aggregates pricing from multiple providers,
 ### 1. Clone and Setup
 
 ```bash
-git clone <your-repo>
-cd DATA-INFRASTRUCTURE-FOR-TRUSTLESS-MARKETS
+git clone https://github.com/YOUR_USERNAME/GP4U-Mk-2.git
+cd GP4U-Mk-2
 
 # Copy environment files
 cp infra/.env.example infra/.env
@@ -142,7 +144,7 @@ Visit http://localhost:3000 and fill out the "Get Your Quote" form.
 ## Project Structure
 
 ```
-DATA-INFRASTRUCTURE-FOR-TRUSTLESS-MARKETS/
+GP4U-Mk-2/
 ├── infra/                      # Infrastructure & deployment
 │   ├── docker-compose.yml      # Service definitions
 │   ├── .env.example            # Env vars template
