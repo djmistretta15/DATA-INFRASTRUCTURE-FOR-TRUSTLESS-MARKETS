@@ -1,0 +1,48 @@
+{
+  "name": "Node: Check Arbitrage Opportunity",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "check-arbitrage",
+        "responseMode": "lastNode"
+      },
+      "id": "webhook-input",
+      "name": "Input (Prices)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if there's an arbitrage opportunity\nconst input = $input.first().json.body;\nconst minMarginPct = input.min_margin_pct || 20.0;\n\nconst cheapest = input.best_price;\nconst marketAvg = input.all_available.reduce((sum, q) => sum + q.price, 0) / input.all_available.length;\n\n// Calculate potential resale price (slightly below avg for competitiveness)\nconst resalePrice = marketAvg * 0.95;\nconst marginPct = ((resalePrice - cheapest) / cheapest) * 100;\nconst profitPerHour = resalePrice - cheapest;\nconst profit24h = profitPerHour * 24;\n\nconst hasOpportunity = marginPct >= minMarginPct;\n\nreturn {\n  has_opportunity: hasOpportunity,\n  gpu_type: input.gpu_type,\n  buy_from: input.best_provider,\n  buy_price: cheapest,\n  sell_price: resalePrice,\n  margin_pct: Math.round(marginPct * 100) / 100,\n  profit_per_hour: Math.round(profitPerHour * 100) / 100,\n  profit_24h: Math.round(profit24h * 100) / 100,\n  market_avg: Math.round(marketAvg * 100) / 100,\n  min_margin_required: minMarginPct,\n  timestamp: new Date().toISOString(),\n  message: hasOpportunity \n    ? `🎯 Arbitrage opportunity! Buy ${input.gpu_type} from ${input.best_provider} at $${cheapest}/hr, resell at $${resalePrice}/hr (${marginPct.toFixed(1)}% margin, $${profit24h}/day)`\n    : `No arbitrage: margin only ${marginPct.toFixed(1)}% (need ${minMarginPct}%)`\n};"
+      },
+      "id": "check-arb",
+      "name": "Calculate Arbitrage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "output",
+      "name": "Output (Opportunity)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Input (Prices)": {
+      "main": [[{"node": "Calculate Arbitrage", "type": "main", "index": 0}]]
+    },
+    "Calculate Arbitrage": {
+      "main": [[{"node": "Output (Opportunity)", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"name": "atomic-node"}, {"name": "arbitrage"}]
+}

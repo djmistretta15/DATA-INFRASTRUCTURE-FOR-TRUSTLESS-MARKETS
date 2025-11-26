@@ -1,0 +1,66 @@
+{
+  "name": "Node: Send Discord Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "send-discord",
+        "responseMode": "lastNode"
+      },
+      "id": "webhook-input",
+      "name": "Input (Message)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format message for Discord\nconst data = $input.first().json.body;\n\nlet embed = {\n  title: data.title || '📢 GPU Black Market Alert',\n  description: data.message || data.description,\n  color: data.color || 3447003,  // Blue\n  timestamp: new Date().toISOString(),\n  fields: []\n};\n\n// Add custom fields if provided\nif (data.fields) {\n  embed.fields = data.fields;\n}\n\n// For arbitrage opportunities\nif (data.type === 'arbitrage' && data.opportunity) {\n  const opp = data.opportunity;\n  embed.title = '🎯 Arbitrage Opportunity Found!';\n  embed.color = 3066993; // Green\n  embed.fields = [\n    {\n      name: 'GPU Type',\n      value: opp.gpu_type,\n      inline: true\n    },\n    {\n      name: 'Buy From',\n      value: `${opp.buy_from} @ $${opp.buy_price}/hr`,\n      inline: true\n    },\n    {\n      name: 'Sell Price',\n      value: `$${opp.sell_price}/hr`,\n      inline: true\n    },\n    {\n      name: 'Margin',\n      value: `${opp.margin_pct}%`,\n      inline: true\n    },\n    {\n      name: 'Profit/Day',\n      value: `$${opp.profit_24h}`,\n      inline: true\n    },\n    {\n      name: 'Time',\n      value: new Date().toLocaleString(),\n      inline: true\n    }\n  ];\n}\n\nreturn {\n  webhook_url: data.discord_webhook_url || $env.DISCORD_WEBHOOK_URL,\n  embed: embed\n};"
+      },
+      "id": "format-message",
+      "name": "Format Discord Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.webhook_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ embeds: [$json.embed] }) }}",
+        "options": {}
+      },
+      "id": "send-webhook",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, sent_at: $now.toISO() } }}"
+      },
+      "id": "output",
+      "name": "Output (Confirmation)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Input (Message)": {
+      "main": [[{"node": "Format Discord Message", "type": "main", "index": 0}]]
+    },
+    "Format Discord Message": {
+      "main": [[{"node": "Send to Discord", "type": "main", "index": 0}]]
+    },
+    "Send to Discord": {
+      "main": [[{"node": "Output (Confirmation)", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"name": "atomic-node"}, {"name": "notifications"}]
+}

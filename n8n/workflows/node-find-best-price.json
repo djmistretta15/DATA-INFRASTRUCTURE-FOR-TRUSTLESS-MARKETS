@@ -1,0 +1,48 @@
+{
+  "name": "Node: Find Best Price",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "find-best-price",
+        "responseMode": "lastNode"
+      },
+      "id": "webhook-input",
+      "name": "Input (Provider Quotes)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find the cheapest available provider\nconst quotes = $input.first().json.body.all_provider_quotes || [];\n\n// Filter to available only\nconst available = quotes.filter(q => q.available && q.hourly_cost);\n\nif (available.length === 0) {\n  return {\n    success: false,\n    error: 'No providers available'\n  };\n}\n\n// Sort by cost\navailable.sort((a, b) => a.hourly_cost - b.hourly_cost);\n\nconst best = available[0];\nconst second_best = available[1] || null;\n\nreturn {\n  success: true,\n  best_provider: best.provider,\n  best_price: best.hourly_cost,\n  gpu_type: best.gpu_type,\n  region: best.region,\n  second_best_provider: second_best?.provider || null,\n  second_best_price: second_best?.hourly_cost || null,\n  price_difference: second_best ? (second_best.hourly_cost - best.hourly_cost) : 0,\n  all_available: available.map(q => ({\n    provider: q.provider,\n    price: q.hourly_cost\n  }))\n};"
+      },
+      "id": "find-best",
+      "name": "Find Cheapest Provider",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "output",
+      "name": "Output (Best Price)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Input (Provider Quotes)": {
+      "main": [[{"node": "Find Cheapest Provider", "type": "main", "index": 0}]]
+    },
+    "Find Cheapest Provider": {
+      "main": [[{"node": "Output (Best Price)", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"name": "atomic-node"}, {"name": "pricing"}]
+}

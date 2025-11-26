@@ -1,0 +1,75 @@
+{
+  "name": "Node: Create User",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "create-user",
+        "responseMode": "lastNode"
+      },
+      "id": "webhook-input",
+      "name": "Input (User Data)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare user data for Supabase\nconst input = $input.first().json.body;\n\nreturn {\n  email: input.email,\n  username: input.username || input.email.split('@')[0],\n  referral_code: input.referral_code || null,\n  referred_by: input.referred_by || null,\n  user_type: input.user_type || 'customer',  // customer or streamer\n  metadata: {\n    signup_source: input.source || 'web',\n    ip_address: input.ip_address || null,\n    user_agent: input.user_agent || null\n  },\n  created_at: new Date().toISOString()\n};"
+      },
+      "id": "prepare-data",
+      "name": "Prepare User Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/users",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Authorization", "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "insert-supabase",
+      "name": "Insert to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "notes": "Disable if Supabase not configured"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, user: $json[0] || $('Prepare User Data').first().json } }}"
+      },
+      "id": "output",
+      "name": "Output (User Created)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Input (User Data)": {
+      "main": [[{"node": "Prepare User Data", "type": "main", "index": 0}]]
+    },
+    "Prepare User Data": {
+      "main": [[{"node": "Insert to Supabase", "type": "main", "index": 0}]]
+    },
+    "Insert to Supabase": {
+      "main": [[{"node": "Output (User Created)", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"name": "atomic-node"}, {"name": "users"}]
+}

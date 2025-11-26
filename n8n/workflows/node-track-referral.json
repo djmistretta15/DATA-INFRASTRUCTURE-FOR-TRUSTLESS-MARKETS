@@ -1,0 +1,74 @@
+{
+  "name": "Node: Track Referral",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "track-referral",
+        "responseMode": "lastNode"
+      },
+      "id": "webhook-input",
+      "name": "Input (Referral Data)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Track referral conversion\nconst input = $input.first().json.body;\n\nreturn {\n  referrer_id: input.referrer_id,\n  referred_user_id: input.referred_user_id,\n  referral_code: input.referral_code,\n  conversion_type: input.conversion_type || 'signup',  // signup, first_purchase, etc\n  conversion_value: input.conversion_value || 0,\n  commission_pct: input.commission_pct || 10.0,\n  commission_amount: (input.conversion_value || 0) * ((input.commission_pct || 10.0) / 100),\n  status: 'pending',  // pending, approved, paid\n  metadata: {\n    source: input.source,\n    campaign: input.campaign || null\n  },\n  created_at: new Date().toISOString()\n};"
+      },
+      "id": "prepare-referral",
+      "name": "Calculate Commission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/referrals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Authorization", "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "save-referral",
+      "name": "Save to Database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, referral: $json[0] || $('Calculate Commission').first().json } }}"
+      },
+      "id": "output",
+      "name": "Output (Referral Tracked)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Input (Referral Data)": {
+      "main": [[{"node": "Calculate Commission", "type": "main", "index": 0}]]
+    },
+    "Calculate Commission": {
+      "main": [[{"node": "Save to Database", "type": "main", "index": 0}]]
+    },
+    "Save to Database": {
+      "main": [[{"node": "Output (Referral Tracked)", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"name": "atomic-node"}, {"name": "referrals"}]
+}

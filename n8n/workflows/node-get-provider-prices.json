@@ -1,0 +1,57 @@
+{
+  "name": "Node: Get Provider Prices",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "get-prices",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-input",
+      "name": "Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://price-engine:8000/quote",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "fetch-prices",
+      "name": "Fetch All Provider Prices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "output",
+      "name": "Output",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Input": {
+      "main": [[{"node": "Fetch All Provider Prices", "type": "main", "index": 0}]]
+    },
+    "Fetch All Provider Prices": {
+      "main": [[{"node": "Output", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"name": "atomic-node"}, {"name": "pricing"}]
+}
