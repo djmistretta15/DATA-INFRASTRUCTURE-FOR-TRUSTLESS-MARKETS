@@ -79,11 +79,16 @@ This starts:
 
 ### 3. Configure n8n Workflow
 
+**Option A: Import Pre-built Workflow (RECOMMENDED)**
 1. Open http://localhost:5678
-2. Create a new workflow
-3. Follow the steps in `n8n/FLOW_SPEC.md` to build the GPU rental flow
-4. Set environment variables in n8n settings (Supabase URL, API keys)
+2. Click "Workflows" → "Import from file"
+3. Select `n8n/gpu-rental-workflow.json`
+4. Set environment variables (SUPABASE_URL, SUPABASE_ANON_KEY)
 5. Activate the workflow
+6. See `n8n/IMPORT_GUIDE.md` for detailed instructions
+
+**Option B: Build Manually**
+1. Follow the steps in `n8n/FLOW_SPEC.md` to build from scratch
 
 ### 4. Setup Supabase
 

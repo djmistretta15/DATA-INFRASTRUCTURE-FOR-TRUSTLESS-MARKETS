@@ -1,0 +1,230 @@
+{
+  "name": "GPU Rental Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rent",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-receive",
+      "name": "Receive Rental Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "gpu-rent-webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://price-engine:8000/quote",
+        "authentication": "none",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "gpu_type",
+              "value": "={{ $json.body.gpu_type }}"
+            },
+            {
+              "name": "vram_gb",
+              "value": "={{ $json.body.vram_gb }}"
+            },
+            {
+              "name": "hours",
+              "value": "={{ $json.body.hours }}"
+            },
+            {
+              "name": "region",
+              "value": "={{ $json.body.region || 'any' }}"
+            },
+            {
+              "name": "priority",
+              "value": "={{ $json.body.priority || 'normal' }}"
+            },
+            {
+              "name": "max_price_per_hour",
+              "value": "={{ $json.body.max_price_per_hour }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "http-get-quote",
+      "name": "Get Price Quote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-quote-success",
+      "name": "Check Quote Available",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract quote data for Supabase insert\nconst quote = $input.first().json.quote;\nconst request = $('Receive Rental Request').first().json.body;\n\nreturn {\n  request_id: quote.request_id,\n  user_id: request.user_id || null,\n  referral_code: request.referral_code || null,\n  provider: quote.provider,\n  gpu_type: quote.gpu_type,\n  vram_gb: quote.vram_gb,\n  region: quote.region,\n  hours: quote.hours,\n  base_hourly_cost: quote.base_hourly_cost,\n  margin_pct: quote.margin_pct,\n  final_hourly_cost: quote.final_hourly_cost,\n  estimated_total: quote.estimated_total,\n  status: 'pending_payment',\n  is_upgraded: quote.is_upgraded || false,\n  upgraded_from: quote.upgraded_from || null,\n  connect_instructions_type: quote.connect_instructions_type,\n  created_at: new Date().toISOString()\n};"
+      },
+      "id": "code-prepare-order",
+      "name": "Prepare Order Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/gpu_orders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "http-create-order",
+      "name": "Create Order in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 200],
+      "disabled": false,
+      "notes": "TODO: Enable once Supabase is configured"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: true,\n  quote: $('Get Price Quote').first().json.quote,\n  order_id: $json[0]?.id || 'mock_order_id',\n  message: 'Quote generated successfully. Proceed to payment.',\n  next_step: 'payment'\n} }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "webhook-success",
+      "name": "Send Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: false,\n  error: $('Get Price Quote').first().json.error || 'No GPU providers available',\n  message: 'Unable to find available GPU for your requested configuration. Please try different specs or check back later.'\n} }}",
+        "options": {
+          "responseCode": 503
+        }
+      },
+      "id": "webhook-error",
+      "name": "Send No Capacity Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 400]
+    }
+  ],
+  "connections": {
+    "Receive Rental Request": {
+      "main": [
+        [
+          {
+            "node": "Get Price Quote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Price Quote": {
+      "main": [
+        [
+          {
+            "node": "Check Quote Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Quote Available": {
+      "main": [
+        [
+          {
+            "node": "Prepare Order Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send No Capacity Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Order Data": {
+      "main": [
+        [
+          {
+            "node": "Create Order in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Order in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Send Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}
