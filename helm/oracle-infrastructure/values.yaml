@@ -1,0 +1,421 @@
+# Default values for oracle-infrastructure
+# Production-grade configuration
+
+global:
+  environment: production
+  imageRegistry: ""
+  imageTag: "latest"
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+  postgresql:
+    auth:
+      database: reclaim_oracle
+      username: oracle
+      existingSecret: "oracle-db-credentials"
+
+  redis:
+    auth:
+      existingSecret: "oracle-redis-credentials"
+
+# Oracle API Service
+api:
+  enabled: true
+  name: oracle-api
+  replicas: 3
+  image:
+    repository: oracle-api
+    tag: ""
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilization: 70
+    targetMemoryUtilization: 80
+
+  service:
+    type: ClusterIP
+    port: 3000
+
+  env:
+    - name: NODE_ENV
+      value: "production"
+    - name: LOG_LEVEL
+      value: "info"
+    - name: ORACLE_MIN_SOURCES
+      value: "5"
+    - name: ORACLE_DEVIATION_THRESHOLD
+      value: "500"
+    - name: ENABLE_ZK_VERIFICATION
+      value: "true"
+    - name: ENABLE_MEV_PROTECTION
+      value: "true"
+
+  livenessProbe:
+    httpGet:
+      path: /v1/health
+      port: 3000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+
+  readinessProbe:
+    httpGet:
+      path: /v1/health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+# Oracle Indexer Service
+indexer:
+  enabled: true
+  name: oracle-indexer
+  replicas: 2
+  image:
+    repository: oracle-indexer
+    tag: ""
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+  env:
+    - name: INDEXER_BATCH_SIZE
+      value: "1000"
+    - name: INDEXER_RETRY_DELAY
+      value: "5000"
+    - name: INDEXER_MAX_RETRIES
+      value: "10"
+
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: "gp3"
+
+# ML Detector Service
+ml:
+  enabled: true
+  name: ml-detector
+  replicas: 2
+  image:
+    repository: ml-detector
+    tag: ""
+
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+
+  nodeSelector:
+    workload-type: ml
+
+  tolerations:
+    - key: "ml-workload"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+  env:
+    - name: MODEL_PATH
+      value: "/app/models"
+    - name: NUM_WORKERS
+      value: "4"
+    - name: CACHE_SIZE_MB
+      value: "512"
+
+  modelStorage:
+    enabled: true
+    s3Bucket: ""
+    syncInterval: "1h"
+
+# WebSocket Server
+websocket:
+  enabled: true
+  name: ws-server
+  replicas: 3
+  image:
+    repository: ws-server
+    tag: ""
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 15
+    targetCPUUtilization: 60
+
+  service:
+    type: ClusterIP
+    port: 3001
+
+  env:
+    - name: MAX_CONNECTIONS
+      value: "10000"
+    - name: HEARTBEAT_INTERVAL
+      value: "30000"
+
+# GraphQL Server
+graphql:
+  enabled: true
+  name: graphql-server
+  replicas: 3
+  image:
+    repository: graphql-server
+    tag: ""
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilization: 70
+
+  service:
+    type: ClusterIP
+    port: 4000
+
+  env:
+    - name: GRAPHQL_INTROSPECTION
+      value: "false"
+    - name: QUERY_COMPLEXITY_LIMIT
+      value: "1000"
+    - name: QUERY_DEPTH_LIMIT
+      value: "10"
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit-connections: "100"
+    nginx.ingress.kubernetes.io/rate-limit-rps: "50"
+
+  hosts:
+    - host: api.oracle.io
+      paths:
+        - path: /v1
+          pathType: Prefix
+          service: oracle-api
+        - path: /graphql
+          pathType: Exact
+          service: graphql-server
+        - path: /ws
+          pathType: Prefix
+          service: ws-server
+
+  tls:
+    - secretName: oracle-tls
+      hosts:
+        - api.oracle.io
+
+# PostgreSQL (TimescaleDB)
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: timescale/timescaledb
+    tag: latest-pg15
+
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: "gp3"
+
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+      limits:
+        cpu: "2000m"
+        memory: "8Gi"
+
+    extendedConfiguration: |
+      max_connections = 200
+      shared_buffers = 2GB
+      effective_cache_size = 6GB
+      maintenance_work_mem = 512MB
+      checkpoint_completion_target = 0.9
+      wal_buffers = 64MB
+      default_statistics_target = 100
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      work_mem = 10485kB
+      min_wal_size = 2GB
+      max_wal_size = 8GB
+
+  readReplicas:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 100Gi
+
+# Redis
+redis:
+  enabled: true
+  architecture: replication
+
+  master:
+    persistence:
+      enabled: true
+      size: 20Gi
+
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 20Gi
+
+  sentinel:
+    enabled: true
+    quorum: 2
+
+# Monitoring Stack
+monitoring:
+  enabled: true
+
+  prometheus:
+    retention: 30d
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+      limits:
+        cpu: "2000m"
+        memory: "8Gi"
+
+    alertmanager:
+      enabled: true
+      config:
+        global:
+          slack_api_url: ""
+        route:
+          receiver: 'slack-notifications'
+          group_by: ['alertname', 'severity']
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+        receivers:
+          - name: 'slack-notifications'
+            slack_configs:
+              - channel: '#oracle-alerts'
+                send_resolved: true
+
+  grafana:
+    enabled: true
+    adminPassword: ""
+    persistence:
+      enabled: true
+      size: 10Gi
+
+    dashboardProviders:
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: 'oracle-dashboards'
+            type: file
+            options:
+              path: /var/lib/grafana/dashboards
+
+# Security Context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+# Pod Security Policy
+podSecurityPolicy:
+  enabled: true
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+
+# Network Policies
+networkPolicy:
+  enabled: true
+  defaultDeny: true
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: ""
+  name: "oracle-service-account"
+
+# Resource Quotas
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "20"
+    requests.memory: "40Gi"
+    limits.cpu: "40"
+    limits.memory: "80Gi"
+    pods: "100"
+
+# Limit Ranges
+limitRange:
+  enabled: true
+  default:
+    cpu: "500m"
+    memory: "1Gi"
+  defaultRequest:
+    cpu: "100m"
+    memory: "256Mi"
+  max:
+    cpu: "4"
+    memory: "8Gi"

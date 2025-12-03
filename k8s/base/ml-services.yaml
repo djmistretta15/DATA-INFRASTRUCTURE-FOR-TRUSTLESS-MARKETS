@@ -1,0 +1,224 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-detector
+  namespace: reclaim-oracle
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: anomaly-detector
+  template:
+    metadata:
+      labels:
+        app: anomaly-detector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: detector
+          image: reclaim-oracle/ml-detector:latest
+          command: ["python", "-m", "ml.fraudAlertsPipeline"]
+          ports:
+            - containerPort: 8000
+              name: metrics
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://reclaim:$(DATABASE_PASSWORD)@$(DATABASE_HOST):$(DATABASE_PORT)/$(DATABASE_NAME)"
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):$(REDIS_PORT)"
+            - name: MODEL_PATH
+              value: "/models"
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secrets
+                  key: DATABASE_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secrets
+                  key: REDIS_PASSWORD
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secrets
+                  key: TELEGRAM_BOT_TOKEN
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secrets
+                  key: SLACK_WEBHOOK_URL
+          envFrom:
+            - configMapRef:
+                name: oracle-config
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ml-models-pvc
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-models-pvc
+  namespace: reclaim-oracle
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: model-retraining
+  namespace: reclaim-oracle
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: trainer
+              image: reclaim-oracle/ml-trainer:latest
+              command:
+                - python
+                - -m
+                - ml.feedTrainer
+                - --token-id
+                - "ETH_USD"
+                - --force
+                - --ensemble
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql://reclaim:$(DATABASE_PASSWORD)@$(DATABASE_HOST):$(DATABASE_PORT)/$(DATABASE_NAME)"
+                - name: DATABASE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: oracle-secrets
+                      key: DATABASE_PASSWORD
+              envFrom:
+                - configMapRef:
+                    name: oracle-config
+              volumeMounts:
+                - name: models
+                  mountPath: /models
+              resources:
+                requests:
+                  cpu: "2000m"
+                  memory: "4Gi"
+                limits:
+                  cpu: "8000m"
+                  memory: "16Gi"
+          volumes:
+            - name: models
+              persistentVolumeClaim:
+                claimName: ml-models-pvc
+          restartPolicy: OnFailure
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-model-server
+  namespace: reclaim-oracle
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ml-model-server
+  template:
+    metadata:
+      labels:
+        app: ml-model-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+    spec:
+      containers:
+        - name: model-server
+          image: reclaim-oracle/ml-serving:latest
+          ports:
+            - containerPort: 8001
+              name: inference
+            - containerPort: 8002
+              name: grpc
+          env:
+            - name: MODEL_PATH
+              value: "/models"
+            - name: MAX_BATCH_SIZE
+              value: "32"
+            - name: NUM_WORKERS
+              value: "4"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ml-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-model-server-service
+  namespace: reclaim-oracle
+spec:
+  selector:
+    app: ml-model-server
+  ports:
+    - port: 8001
+      targetPort: 8001
+      name: http
+    - port: 8002
+      targetPort: 8002
+      name: grpc

@@ -1,0 +1,86 @@
+# Multi-stage Dockerfile for GraphQL Server
+# Apollo Server with subscriptions support
+
+# Stage 1: Dependencies
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+RUN apk add --no-cache python3 make g++ git
+
+COPY package*.json ./
+COPY prisma ./prisma/
+
+RUN npm ci --include=dev
+RUN npx prisma generate
+
+# Stage 2: Builder
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package*.json ./
+
+COPY src ./src
+COPY api ./api
+COPY tsconfig.json ./
+COPY prisma ./prisma/
+
+RUN npm run build:graphql
+
+RUN npm prune --production
+
+# Stage 3: Runtime
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S graphql -u 1001 -G nodejs
+
+RUN apk add --no-cache \
+    dumb-init \
+    curl \
+    ca-certificates \
+    tzdata
+
+COPY --from=builder --chown=graphql:nodejs /app/dist ./dist
+COPY --from=builder --chown=graphql:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=graphql:nodejs /app/package.json ./
+COPY --from=deps --chown=graphql:nodejs /app/prisma ./prisma
+COPY --from=deps --chown=graphql:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+
+# Copy GraphQL schema files
+COPY --chown=graphql:nodejs schema ./schema
+
+RUN mkdir -p /app/logs && \
+    chown -R graphql:nodejs /app
+
+ARG VERSION=unknown
+ARG BUILD_DATE=unknown
+ARG GIT_COMMIT=unknown
+
+LABEL org.opencontainers.image.title="Oracle GraphQL Server" \
+      org.opencontainers.image.description="GraphQL API server with subscriptions" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}"
+
+ENV NODE_ENV=production \
+    PORT=4000 \
+    TZ=UTC \
+    NODE_OPTIONS="--max-old-space-size=2048 --enable-source-maps" \
+    VERSION=${VERSION} \
+    GRAPHQL_INTROSPECTION=false \
+    GRAPHQL_PLAYGROUND=false \
+    QUERY_COMPLEXITY_LIMIT=1000 \
+    QUERY_DEPTH_LIMIT=10
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:${PORT}/.well-known/apollo/server-health || exit 1
+
+USER graphql
+
+EXPOSE 4000
+
+ENTRYPOINT ["dumb-init", "--"]
+
+CMD ["node", "dist/api/graphql-server.js"]

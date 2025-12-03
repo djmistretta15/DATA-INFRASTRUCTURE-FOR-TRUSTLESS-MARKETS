@@ -1,0 +1,581 @@
+# Comprehensive CI Pipeline for Oracle Infrastructure
+# Production-grade testing, security scanning, and artifact generation
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 0 * * *'  # Daily security scans
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+  GO_VERSION: '1.21'
+  SOLC_VERSION: '0.8.19'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # TypeScript/Node.js Testing
+  test-typescript:
+    name: TypeScript Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
+
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: oracle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Type checking
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm run test:unit -- --coverage
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/oracle_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/oracle_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: typescript
+          name: typescript-coverage
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-ts-${{ matrix.node-version }}
+          path: |
+            coverage/
+            test-results/
+
+  # Python ML Testing
+  test-python:
+    name: Python ML Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ml/requirements.txt
+          pip install pytest pytest-cov pytest-asyncio flake8 mypy black
+
+      - name: Code formatting check
+        run: black --check ml/
+
+      - name: Linting
+        run: flake8 ml/ --max-line-length=120 --ignore=E501,W503
+
+      - name: Type checking
+        run: mypy ml/ --ignore-missing-imports
+
+      - name: Run ML tests
+        run: |
+          python -m pytest tests/ -v --cov=ml --cov-report=xml --cov-report=html
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: python-ml
+          name: python-coverage
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: ml-test-results-${{ matrix.python-version }}
+          path: |
+            htmlcov/
+            .coverage
+
+  # Solidity Smart Contract Testing
+  test-solidity:
+    name: Solidity Contract Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Run contract tests
+        run: npx hardhat test --network hardhat
+        env:
+          REPORT_GAS: true
+
+      - name: Gas usage report
+        run: npx hardhat test --network hardhat 2>&1 | tee gas-report.txt
+
+      - name: Contract size check
+        run: npx hardhat size-contracts
+
+      - name: Coverage report
+        run: npx hardhat coverage
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: solidity
+          name: solidity-coverage
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: solidity-artifacts
+          path: |
+            artifacts/
+            coverage/
+            gas-report.txt
+
+  # Security Scanning
+  security-scan:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: NPM Audit
+        run: npm audit --production --audit-level=high
+        continue-on-error: true
+
+      - name: Snyk security scan
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+      - name: Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Solidity security scan (Slither)
+        uses: crytic/slither-action@v0.3.0
+        continue-on-error: true
+        with:
+          target: 'contracts/'
+          sarif: 'slither-results.sarif'
+
+      - name: Upload Slither results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'slither-results.sarif'
+
+      - name: Python security scan (Bandit)
+        run: |
+          pip install bandit
+          bandit -r ml/ -f json -o bandit-report.json || true
+
+      - name: Secret scanning
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            trivy-results.sarif
+            slither-results.sarif
+            bandit-report.json
+
+  # Docker Build Testing
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test-typescript, test-python]
+    strategy:
+      matrix:
+        image:
+          - name: oracle-api
+            context: .
+            dockerfile: docker/Dockerfile.api
+          - name: oracle-indexer
+            context: .
+            dockerfile: docker/Dockerfile.indexer
+          - name: ml-detector
+            context: .
+            dockerfile: docker/Dockerfile.ml
+          - name: ws-server
+            context: .
+            dockerfile: docker/Dockerfile.websocket
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ matrix.image.name }}:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test image
+        run: |
+          docker run --rm ${{ matrix.image.name }}:test --version || \
+          docker run --rm ${{ matrix.image.name }}:test node --version || \
+          docker run --rm ${{ matrix.image.name }}:test python --version
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image.name }}:test
+          format: 'sarif'
+          output: 'image-scan-${{ matrix.image.name }}.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'image-scan-${{ matrix.image.name }}.sarif'
+
+  # Terraform Validation
+  terraform-validate:
+    name: Terraform Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.6.0'
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init -backend=false
+
+      - name: Terraform Validate
+        run: |
+          cd terraform
+          terraform validate
+
+      - name: tfsec security scanner
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform/
+          soft_fail: false
+
+      - name: Checkov IaC scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+
+      - name: Upload Checkov results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'checkov-results.sarif'
+
+  # Kubernetes Manifest Validation
+  kubernetes-validate:
+    name: Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubeval
+        run: |
+          wget https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xf kubeval-linux-amd64.tar.gz
+          sudo mv kubeval /usr/local/bin/
+
+      - name: Validate Kubernetes manifests
+        run: |
+          find k8s/ -name '*.yaml' -type f | xargs kubeval --strict
+
+      - name: Install kubesec
+        run: |
+          wget https://github.com/controlplaneio/kubesec/releases/latest/download/kubesec_linux_amd64.tar.gz
+          tar xf kubesec_linux_amd64.tar.gz
+          sudo mv kubesec /usr/local/bin/
+
+      - name: Security scan Kubernetes manifests
+        run: |
+          for f in $(find k8s/ -name '*.yaml' -type f); do
+            echo "Scanning $f"
+            kubesec scan "$f" || true
+          done
+
+      - name: Polaris audit
+        uses: fairwindsops/polaris/.github/actions/audit@master
+        with:
+          args: audit --audit-path k8s/ --format pretty
+
+  # API Contract Testing
+  api-contract-testing:
+    name: API Contract Tests
+    runs-on: ubuntu-latest
+    needs: test-typescript
+
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: oracle_test
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate OpenAPI spec
+        run: npm run generate:openapi
+
+      - name: Validate OpenAPI spec
+        uses: char0n/swagger-editor-validate@v1
+        with:
+          definition-file: api/openapi.yaml
+
+      - name: Start API server
+        run: |
+          npm run start:api &
+          sleep 10
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/oracle_test
+          REDIS_URL: redis://localhost:6379
+          PORT: 3000
+
+      - name: Run Pact contract tests
+        run: npm run test:contract
+
+      - name: Upload contract results
+        uses: actions/upload-artifact@v3
+        with:
+          name: contract-test-results
+          path: pact/
+
+  # Performance baseline
+  performance-baseline:
+    name: Performance Baseline
+    runs-on: ubuntu-latest
+    needs: [test-typescript, build-images]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup K6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run baseline performance tests
+        run: |
+          k6 run --out json=results.json tests/load/baseline.js
+        continue-on-error: true
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-baseline
+          path: results.json
+
+  # Documentation Generation
+  generate-docs:
+    name: Generate Documentation
+    runs-on: ubuntu-latest
+    needs: [test-typescript, test-solidity]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate TypeScript docs
+        run: npx typedoc --out docs/typescript src/
+
+      - name: Generate Solidity docs
+        run: npx hardhat docgen
+
+      - name: Generate API docs
+        run: npm run docs:api
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: generated-docs
+          path: docs/
+
+  # Final status check
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs:
+      - test-typescript
+      - test-python
+      - test-solidity
+      - security-scan
+      - build-images
+      - terraform-validate
+      - kubernetes-validate
+    if: always()
+
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.test-typescript.result }}" != "success" ]] || \
+             [[ "${{ needs.test-python.result }}" != "success" ]] || \
+             [[ "${{ needs.test-solidity.result }}" != "success" ]] || \
+             [[ "${{ needs.security-scan.result }}" != "success" ]] || \
+             [[ "${{ needs.build-images.result }}" != "success" ]] || \
+             [[ "${{ needs.terraform-validate.result }}" != "success" ]] || \
+             [[ "${{ needs.kubernetes-validate.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All CI checks passed!"

@@ -1,0 +1,18 @@
+# Python dependencies for ML and ZK components
+numpy==1.24.3
+pandas==2.0.3
+scikit-learn==1.3.0
+tensorflow==2.14.0
+torch==2.1.0
+web3==6.11.3
+py-solc-x==2.0.2
+eth-abi==4.2.1
+redis==5.0.1
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.0
+requests==2.31.0
+websockets==12.0
+asyncio==3.4.3
+cryptography==41.0.7
+py-ecc==6.0.0

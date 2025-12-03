@@ -1,0 +1,35 @@
+apiVersion: v2
+name: oracle-infrastructure
+description: Production-grade oracle data infrastructure for trustless markets
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - oracle
+  - blockchain
+  - defi
+  - infrastructure
+  - monitoring
+home: https://github.com/org/oracle-infrastructure
+sources:
+  - https://github.com/org/oracle-infrastructure
+maintainers:
+  - name: Oracle Team
+    email: team@oracle.io
+dependencies:
+  - name: postgresql
+    version: "12.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: "17.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: prometheus
+    version: "25.x.x"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: monitoring.enabled
+  - name: grafana
+    version: "7.x.x"
+    repository: https://grafana.github.io/helm-charts
+    condition: monitoring.enabled

@@ -1,0 +1,541 @@
+# Continuous Deployment Pipeline for Oracle Infrastructure
+# Production-grade deployment with canary releases, rollback, and monitoring
+name: CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      deploy_strategy:
+        description: 'Deployment strategy'
+        required: true
+        default: 'canary'
+        type: choice
+        options:
+          - canary
+          - blue-green
+          - rolling
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+  EKS_CLUSTER_STAGING: oracle-staging-eks
+  EKS_CLUSTER_PRODUCTION: oracle-prod-eks
+
+jobs:
+  # Build and push Docker images
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.version.outputs.version }}
+
+    strategy:
+      matrix:
+        include:
+          - service: oracle-api
+            dockerfile: docker/Dockerfile.api
+          - service: oracle-indexer
+            dockerfile: docker/Dockerfile.indexer
+          - service: ml-detector
+            dockerfile: docker/Dockerfile.ml
+          - service: ws-server
+            dockerfile: docker/Dockerfile.websocket
+          - service: graphql-server
+            dockerfile: docker/Dockerfile.graphql
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="$(git describe --tags --always)-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/${{ matrix.service }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Scan pushed image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.service }}:${{ steps.version.outputs.version }}
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL'
+
+  # Deploy to staging
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_STAGING }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install oracle-infrastructure ./helm/oracle-infrastructure \
+            --namespace reclaim-oracle \
+            --create-namespace \
+            --set global.environment=staging \
+            --set global.imageTag=${{ needs.build-and-push.outputs.version }} \
+            --set global.imageRegistry=${{ env.ECR_REGISTRY }} \
+            --set api.replicas=2 \
+            --set indexer.replicas=2 \
+            --set ml.replicas=1 \
+            --set redis.enabled=true \
+            --set monitoring.enabled=true \
+            --values ./helm/oracle-infrastructure/values-staging.yaml \
+            --wait \
+            --timeout 10m
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/oracle-api -n reclaim-oracle --timeout=300s
+          kubectl rollout status deployment/oracle-indexer -n reclaim-oracle --timeout=300s
+          kubectl rollout status deployment/ml-detector -n reclaim-oracle --timeout=300s
+
+      - name: Run smoke tests
+        run: |
+          STAGING_URL=$(kubectl get ingress oracle-api -n reclaim-oracle -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          # Health check
+          curl -sf "https://${STAGING_URL}/v1/health" | jq .
+
+          # API response check
+          curl -sf "https://${STAGING_URL}/v1/oracle/status" | jq .
+
+      - name: Run integration tests
+        run: |
+          npm ci
+          npm run test:e2e:staging
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+
+  # Performance testing on staging
+  performance-test:
+    name: Performance Testing
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install K6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run load tests
+        run: |
+          k6 run \
+            --env BASE_URL=${{ secrets.STAGING_API_URL }} \
+            --out json=load-test-results.json \
+            tests/load/stress-test.js
+
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: load-test-results
+          path: load-test-results.json
+
+      - name: Check performance thresholds
+        run: |
+          # Parse results and fail if thresholds exceeded
+          python3 scripts/check-performance.py load-test-results.json
+
+  # Canary deployment to production
+  deploy-production-canary:
+    name: Canary Deployment to Production
+    needs: [deploy-staging, performance-test]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_PRODUCTION }}
+
+      - name: Install Argo Rollouts CLI
+        run: |
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x kubectl-argo-rollouts-linux-amd64
+          sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+      - name: Deploy canary (10%)
+        run: |
+          # Update image tags in rollout
+          kubectl argo rollouts set image oracle-api-rollout \
+            oracle-api=${{ env.ECR_REGISTRY }}/oracle-api:${{ needs.build-and-push.outputs.version }} \
+            -n reclaim-oracle
+
+          # Wait for canary to reach 10%
+          kubectl argo rollouts status oracle-api-rollout -n reclaim-oracle --watch
+
+      - name: Monitor canary metrics (5 minutes)
+        run: |
+          sleep 300  # 5 minute observation window
+
+          # Check error rates
+          ERROR_RATE=$(kubectl exec -n monitoring prometheus-0 -- curl -s "http://localhost:9090/api/v1/query?query=rate(http_requests_total{job=\"oracle-api\",status=~\"5..\"}[5m])" | jq -r '.data.result[0].value[1]')
+
+          if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+            echo "High error rate detected: $ERROR_RATE"
+            kubectl argo rollouts abort oracle-api-rollout -n reclaim-oracle
+            exit 1
+          fi
+
+      - name: Promote canary to 50%
+        run: |
+          kubectl argo rollouts promote oracle-api-rollout -n reclaim-oracle
+          kubectl argo rollouts status oracle-api-rollout -n reclaim-oracle --watch
+
+      - name: Monitor at 50% (10 minutes)
+        run: |
+          sleep 600  # 10 minute observation window
+
+          # Comprehensive health checks
+          ./scripts/production-health-check.sh
+
+      - name: Full promotion
+        run: |
+          kubectl argo rollouts promote oracle-api-rollout -n reclaim-oracle
+          kubectl argo rollouts status oracle-api-rollout -n reclaim-oracle --watch
+
+      - name: Verify full deployment
+        run: |
+          # Ensure all pods are running new version
+          kubectl get pods -n reclaim-oracle -l app=oracle-api -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort | uniq
+
+  # Database migrations
+  database-migration:
+    name: Database Migration
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get database credentials
+        run: |
+          DB_SECRET=$(aws secretsmanager get-secret-value --secret-id oracle-staging-db-credentials --query SecretString --output text)
+          echo "DATABASE_URL=$(echo $DB_SECRET | jq -r '.url')" >> $GITHUB_ENV
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Run database migrations
+        run: |
+          npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Verify migration
+        run: |
+          npx prisma migrate status
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+  # Update ML models
+  deploy-ml-models:
+    name: Deploy ML Models
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r ml/requirements.txt
+          pip install boto3
+
+      - name: Sync models to S3
+        run: |
+          aws s3 sync ml/models/ s3://${{ secrets.ML_MODELS_BUCKET }}/models/ \
+            --exclude "*" \
+            --include "*.pkl" \
+            --include "*.h5" \
+            --include "*.pt"
+
+      - name: Update model registry
+        run: |
+          python scripts/update-model-registry.py \
+            --bucket ${{ secrets.ML_MODELS_BUCKET }} \
+            --version ${{ needs.build-and-push.outputs.version }}
+
+      - name: Reload models in production
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_STAGING }}
+
+          # Trigger model reload via API
+          kubectl exec -n reclaim-oracle deployment/ml-detector -- \
+            curl -X POST http://localhost:8001/v1/models/ensemble/reload
+
+  # Notifications
+  notify-deployment:
+    name: Deployment Notification
+    needs: [deploy-production-canary]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Slack notification
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Oracle Infrastructure Deployment*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Status:*\n${{ needs.deploy-production-canary.result }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Version:*\n${{ needs.build-and-push.outputs.version }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\nProduction"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Deployed by:*\n${{ github.actor }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Deployment"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    },
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Commit"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: PagerDuty alert on failure
+        if: needs.deploy-production-canary.result == 'failure'
+        run: |
+          curl -X POST https://events.pagerduty.com/v2/enqueue \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "routing_key": "${{ secrets.PAGERDUTY_ROUTING_KEY }}",
+              "event_action": "trigger",
+              "payload": {
+                "summary": "Production deployment failed for Oracle Infrastructure",
+                "severity": "critical",
+                "source": "GitHub Actions",
+                "custom_details": {
+                  "run_id": "${{ github.run_id }}",
+                  "commit": "${{ github.sha }}",
+                  "version": "${{ needs.build-and-push.outputs.version }}"
+                }
+              }
+            }'
+
+  # Rollback capability
+  rollback:
+    name: Emergency Rollback
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'rollback'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_PRODUCTION }}
+
+      - name: Abort canary rollout
+        run: |
+          kubectl argo rollouts abort oracle-api-rollout -n reclaim-oracle || true
+          kubectl argo rollouts abort oracle-indexer-rollout -n reclaim-oracle || true
+          kubectl argo rollouts abort ml-detector-rollout -n reclaim-oracle || true
+
+      - name: Rollback to previous version
+        run: |
+          kubectl argo rollouts undo oracle-api-rollout -n reclaim-oracle
+          kubectl argo rollouts undo oracle-indexer-rollout -n reclaim-oracle
+          kubectl argo rollouts undo ml-detector-rollout -n reclaim-oracle
+
+      - name: Verify rollback
+        run: |
+          kubectl rollout status deployment/oracle-api -n reclaim-oracle --timeout=300s
+          kubectl rollout status deployment/oracle-indexer -n reclaim-oracle --timeout=300s
+          kubectl rollout status deployment/ml-detector -n reclaim-oracle --timeout=300s
+
+      - name: Notify rollback
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "⚠️ Emergency rollback executed for Oracle Infrastructure by ${{ github.actor }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

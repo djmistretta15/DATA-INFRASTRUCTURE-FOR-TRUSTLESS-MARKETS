@@ -1,0 +1,323 @@
+// Prisma Schema for Reclaim Oracle Indexer
+// Database: PostgreSQL with TimescaleDB extension for time-series data
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ORACLE MODELS ====================
+
+model PriceFeed {
+  id            String   @id @default(cuid())
+  tokenId       String
+  token         String
+  price         Decimal  @db.Decimal(30, 18)
+  median        Decimal  @db.Decimal(30, 18)
+  stdDev        Decimal  @db.Decimal(30, 18)
+  confidence    Decimal  @db.Decimal(5, 4)
+  sourceCount   Int
+  timestamp     DateTime @default(now())
+  blockNumber   BigInt
+  chain         String
+  zkProofHash   String?
+  verified      Boolean  @default(false)
+  sources       Json     // Array of source data
+
+  @@index([tokenId, timestamp(sort: Desc)])
+  @@index([chain, timestamp(sort: Desc)])
+  @@index([timestamp(sort: Desc)])
+  @@map("price_feeds")
+}
+
+model OracleSource {
+  id              String   @id @default(cuid())
+  address         String   @unique
+  name            String
+  reputation      Int      @default(10000)
+  stakedAmount    Decimal  @db.Decimal(30, 18)
+  totalReports    Int      @default(0)
+  validReports    Int      @default(0)
+  invalidReports  Int      @default(0)
+  slashedAmount   Decimal  @db.Decimal(30, 18) @default(0)
+  rewardsEarned   Decimal  @db.Decimal(30, 18) @default(0)
+  active          Boolean  @default(true)
+  suspended       Boolean  @default(false)
+  registeredAt    DateTime @default(now())
+  lastActivity    DateTime @default(now())
+  metadata        String?
+
+  slashingEvents  SlashingEvent[]
+
+  @@index([active, suspended])
+  @@index([reputation(sort: Desc)])
+  @@map("oracle_sources")
+}
+
+model SlashingEvent {
+  id              String       @id @default(cuid())
+  oracle          OracleSource @relation(fields: [oracleAddress], references: [address])
+  oracleAddress   String
+  tokenId         String
+  amount          Decimal      @db.Decimal(30, 18)
+  reason          String
+  deviation       Decimal      @db.Decimal(10, 6)
+  reportedPrice   Decimal      @db.Decimal(30, 18)
+  actualPrice     Decimal      @db.Decimal(30, 18)
+  proofHash       String
+  slasher         String
+  timestamp       DateTime     @default(now())
+  blockNumber     BigInt
+  disputed        Boolean      @default(false)
+
+  @@index([oracleAddress, timestamp(sort: Desc)])
+  @@index([tokenId, timestamp(sort: Desc)])
+  @@index([timestamp(sort: Desc)])
+  @@map("slashing_events")
+}
+
+model ZKProof {
+  id                String   @id @default(cuid())
+  proofHash         String   @unique
+  publicInputHash   String
+  commitment        String
+  proofType         String
+  prover            String
+  verified          Boolean  @default(false)
+  verificationCount Int      @default(0)
+  securityLevel     Int
+  timestamp         DateTime @default(now())
+  blockNumber       BigInt
+  verifiedAt        DateTime?
+
+  @@index([verified, timestamp(sort: Desc)])
+  @@index([prover, timestamp(sort: Desc)])
+  @@map("zk_proofs")
+}
+
+// ==================== INDEXER MODELS ====================
+
+model TokenTransfer {
+  id          String   @id @default(cuid())
+  hash        String
+  from        String
+  to          String
+  token       String
+  amount      Decimal  @db.Decimal(78, 0)
+  chain       String
+  blockNumber BigInt
+  timestamp   DateTime
+  logIndex    Int
+  gasUsed     BigInt
+
+  @@index([token, timestamp(sort: Desc)])
+  @@index([from, timestamp(sort: Desc)])
+  @@index([to, timestamp(sort: Desc)])
+  @@index([chain, blockNumber(sort: Desc)])
+  @@unique([hash, logIndex])
+  @@map("token_transfers")
+}
+
+model TokenBalance {
+  id          String   @id @default(cuid())
+  address     String
+  token       String
+  chain       String
+  balance     Decimal  @db.Decimal(78, 0)
+  decimals    Int
+  blockNumber BigInt
+  timestamp   DateTime @default(now())
+
+  @@index([address, token, chain])
+  @@index([token, balance(sort: Desc)])
+  @@map("token_balances")
+}
+
+model LiquidityPool {
+  id              String          @id @default(cuid())
+  address         String          @unique
+  protocol        String
+  chain           String
+  token0          String
+  token1          String
+  reserve0        Decimal         @db.Decimal(78, 0)
+  reserve1        Decimal         @db.Decimal(78, 0)
+  totalLiquidity  Decimal         @db.Decimal(78, 0)
+  fee             Int
+  volumeUSD       Decimal         @db.Decimal(20, 2)
+  tvlUSD          Decimal         @db.Decimal(20, 2)
+  apy             Decimal         @db.Decimal(10, 4)
+  blockNumber     BigInt
+  timestamp       DateTime        @default(now())
+
+  swaps           SwapEvent[]
+  positions       LiquidityPosition[]
+
+  @@index([protocol, chain])
+  @@index([tvlUSD(sort: Desc)])
+  @@index([apy(sort: Desc)])
+  @@map("liquidity_pools")
+}
+
+model SwapEvent {
+  id            String        @id @default(cuid())
+  pool          LiquidityPool @relation(fields: [poolAddress], references: [address])
+  poolAddress   String
+  hash          String
+  sender        String
+  recipient     String
+  amount0In     Decimal       @db.Decimal(78, 0)
+  amount1In     Decimal       @db.Decimal(78, 0)
+  amount0Out    Decimal       @db.Decimal(78, 0)
+  amount1Out    Decimal       @db.Decimal(78, 0)
+  priceImpact   Decimal       @db.Decimal(10, 6)
+  blockNumber   BigInt
+  timestamp     DateTime
+
+  @@index([poolAddress, timestamp(sort: Desc)])
+  @@index([sender, timestamp(sort: Desc)])
+  @@index([timestamp(sort: Desc)])
+  @@map("swap_events")
+}
+
+model LiquidityPosition {
+  id            String        @id @default(cuid())
+  owner         String
+  pool          LiquidityPool @relation(fields: [poolAddress], references: [address])
+  poolAddress   String
+  liquidity     Decimal       @db.Decimal(78, 0)
+  token0Amount  Decimal       @db.Decimal(78, 0)
+  token1Amount  Decimal       @db.Decimal(78, 0)
+  shares        Decimal       @db.Decimal(78, 0)
+  valueUSD      Decimal       @db.Decimal(20, 2)
+  entryBlock    BigInt
+  lastUpdate    DateTime      @default(now())
+
+  @@index([owner, poolAddress])
+  @@index([poolAddress, liquidity(sort: Desc)])
+  @@map("liquidity_positions")
+}
+
+model LendingRate {
+  id            String   @id @default(cuid())
+  protocol      String
+  chain         String
+  asset         String
+  supplyAPY     Decimal  @db.Decimal(10, 6)
+  borrowAPY     Decimal  @db.Decimal(10, 6)
+  utilization   Decimal  @db.Decimal(5, 4)
+  totalSupply   Decimal  @db.Decimal(78, 0)
+  totalBorrow   Decimal  @db.Decimal(78, 0)
+  blockNumber   BigInt
+  timestamp     DateTime @default(now())
+
+  @@index([protocol, asset, timestamp(sort: Desc)])
+  @@index([chain, timestamp(sort: Desc)])
+  @@map("lending_rates")
+}
+
+// ==================== ML & ANALYTICS MODELS ====================
+
+model AnomalyAlert {
+  id              String   @id @default(cuid())
+  feedName        String
+  value           Decimal  @db.Decimal(30, 18)
+  expectedMin     Decimal  @db.Decimal(30, 18)
+  expectedMax     Decimal  @db.Decimal(30, 18)
+  anomalyScore    Decimal  @db.Decimal(5, 4)
+  severity        String   // low, medium, high, critical
+  recommendation  String   @db.Text
+  features        Json
+  timestamp       DateTime @default(now())
+  acknowledged    Boolean  @default(false)
+
+  @@index([severity, timestamp(sort: Desc)])
+  @@index([feedName, timestamp(sort: Desc)])
+  @@index([acknowledged, severity])
+  @@map("anomaly_alerts")
+}
+
+model BlockSnapshot {
+  id            String   @id @default(cuid())
+  chain         String
+  blockNumber   BigInt   @unique
+  timestamp     DateTime
+  gasUsed       BigInt
+  transactions  Int
+  baseFee       BigInt?
+  protocolData  Json     // Aggregated protocol metrics
+
+  @@index([chain, blockNumber(sort: Desc)])
+  @@index([timestamp(sort: Desc)])
+  @@map("block_snapshots")
+}
+
+// ==================== SYSTEM MODELS ====================
+
+model APIRequest {
+  id            String   @id @default(cuid())
+  endpoint      String
+  method        String
+  ip            String
+  userAgent     String?
+  responseTime  Int      // milliseconds
+  statusCode    Int
+  timestamp     DateTime @default(now())
+
+  @@index([endpoint, timestamp(sort: Desc)])
+  @@index([ip, timestamp(sort: Desc)])
+  @@map("api_requests")
+}
+
+model SystemMetric {
+  id        String   @id @default(cuid())
+  metric    String
+  value     Decimal  @db.Decimal(20, 6)
+  unit      String
+  timestamp DateTime @default(now())
+
+  @@index([metric, timestamp(sort: Desc)])
+  @@map("system_metrics")
+}
+
+// ==================== GOVERNANCE MODELS ====================
+
+model GovernanceProposal {
+  id            String   @id @default(cuid())
+  proposer      String
+  proposalType  String
+  title         String
+  description   String   @db.Text
+  data          Json
+  forVotes      Decimal  @db.Decimal(78, 0) @default(0)
+  againstVotes  Decimal  @db.Decimal(78, 0) @default(0)
+  status        String   @default("pending") // pending, active, passed, rejected, executed
+  createdAt     DateTime @default(now())
+  deadline      DateTime
+  executedAt    DateTime?
+
+  votes         Vote[]
+
+  @@index([status, deadline(sort: Desc)])
+  @@index([proposer, createdAt(sort: Desc)])
+  @@map("governance_proposals")
+}
+
+model Vote {
+  id          String              @id @default(cuid())
+  proposal    GovernanceProposal  @relation(fields: [proposalId], references: [id])
+  proposalId  String
+  voter       String
+  support     Boolean
+  weight      Decimal             @db.Decimal(78, 0)
+  reason      String?             @db.Text
+  timestamp   DateTime            @default(now())
+
+  @@unique([proposalId, voter])
+  @@index([voter, timestamp(sort: Desc)])
+  @@map("votes")
+}

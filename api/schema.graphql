@@ -1,0 +1,685 @@
+"""
+Reclaim Oracle Indexer - GraphQL Schema
+Complete API for oracle data, DeFi analytics, and attestations
+"""
+
+scalar DateTime
+scalar BigInt
+scalar Decimal
+scalar JSON
+
+# ==================== QUERIES ====================
+
+type Query {
+  # Oracle Queries
+  price(tokenId: ID!, sources: [OracleSource!]): AggregatedPrice!
+  priceHistory(
+    tokenId: ID!
+    from: DateTime!
+    to: DateTime!
+    interval: TimeInterval!
+  ): [PricePoint!]!
+  cachedPrice(tokenId: ID!): AggregatedPrice
+
+  # Oracle Source Queries
+  oracleSource(address: String!): OracleSourceInfo!
+  oracleSources(active: Boolean, limit: Int = 100): [OracleSourceInfo!]!
+  oracleMetrics(address: String!): OracleMetrics!
+
+  # Slashing Queries
+  slashingEvents(
+    oracle: String
+    tokenId: ID
+    limit: Int = 100
+    offset: Int = 0
+  ): SlashingEventConnection!
+  slashingHistory(oracle: String!): [SlashingEvent!]!
+
+  # ZK Proof Queries
+  zkProof(proofId: ID!): ZKProofData!
+  zkProofs(
+    prover: String
+    verified: Boolean
+    limit: Int = 100
+  ): [ZKProofData!]!
+  verifyProof(proofId: ID!): VerificationResult!
+
+  # Token Indexer Queries
+  tokenBalance(chain: Chain!, token: String!, address: String!): TokenBalance!
+  tokenTransfers(
+    chain: Chain!
+    token: String!
+    address: String
+    from: DateTime
+    to: DateTime
+    limit: Int = 100
+  ): TokenTransferConnection!
+  tokenMetadata(chain: Chain!, address: String!): TokenMetadata!
+  topHolders(chain: Chain!, token: String!, limit: Int = 100): [HolderInfo!]!
+  holderDistribution(chain: Chain!, token: String!): HolderDistribution!
+
+  # Liquidity Pool Queries
+  liquidityPool(chain: Chain!, address: String!): LiquidityPool!
+  liquidityPools(
+    chain: Chain!
+    protocol: Protocol
+    orderBy: PoolOrderBy = TVL_DESC
+    limit: Int = 100
+  ): [LiquidityPool!]!
+  poolMetrics(poolAddress: String!): PoolMetrics!
+  poolSwaps(
+    poolAddress: String!
+    from: DateTime
+    to: DateTime
+    limit: Int = 100
+  ): [SwapEvent!]!
+
+  # Lending Protocol Queries
+  lendingRates(
+    chain: Chain!
+    protocol: LendingProtocol!
+    asset: String
+  ): [LendingRate!]!
+  lendingHistory(
+    chain: Chain!
+    protocol: LendingProtocol!
+    asset: String!
+    from: DateTime!
+    to: DateTime!
+  ): [LendingRate!]!
+
+  # Analytics Queries
+  chainSummary(chain: Chain!): ChainSummary!
+  protocolAnalytics(chain: Chain!, protocol: String!): ProtocolAnalytics!
+  crossChainComparison: [ChainMetrics!]!
+
+  # Anomaly Queries
+  anomalyAlerts(
+    severity: [Severity!]
+    acknowledged: Boolean = false
+    limit: Int = 50
+  ): [AnomalyAlert!]!
+  feedAnomalies(feedName: String!, limit: Int = 100): [AnomalyAlert!]!
+
+  # Governance Queries
+  governanceProposals(
+    status: ProposalStatus
+    limit: Int = 100
+  ): [GovernanceProposal!]!
+  proposal(id: ID!): GovernanceProposal!
+  votes(proposalId: ID!): [Vote!]!
+}
+
+# ==================== MUTATIONS ====================
+
+type Mutation {
+  # Oracle Mutations
+  submitFeed(input: FeedInput!): SubmitFeedResult!
+  submitBatchFeeds(inputs: [FeedInput!]!): BatchSubmitResult!
+
+  # Oracle Management
+  registerOracle(input: OracleRegistration!): RegisterOracleResult!
+  deregisterOracle: DeregisterResult!
+  increaseStake(amount: Decimal!): StakeResult!
+  decreaseStake(amount: Decimal!): StakeResult!
+
+  # Slashing
+  slashOracle(input: SlashInput!): SlashingEvent!
+  createDispute(slashingEventId: ID!, evidence: String!): Dispute!
+  resolveDispute(disputeId: ID!, approved: Boolean!): Dispute!
+
+  # ZK Proofs
+  submitZKProof(input: ZKProofInput!): ZKProofData!
+  createCommitment(dataHash: String!): Commitment!
+  revealCommitment(commitmentId: ID!, data: String!): Commitment!
+
+  # Governance
+  createProposal(input: ProposalInput!): GovernanceProposal!
+  vote(proposalId: ID!, support: Boolean!, reason: String): Vote!
+  executeProposal(proposalId: ID!): ExecutionResult!
+
+  # Anomaly Handling
+  acknowledgeAnomaly(alertId: ID!): AnomalyAlert!
+  overrideOracle(input: OracleOverrideInput!): OracleOverride!
+}
+
+# ==================== SUBSCRIPTIONS ====================
+
+type Subscription {
+  # Real-time price updates
+  priceUpdated(tokenIds: [ID!]!): AggregatedPrice!
+
+  # Anomaly notifications
+  anomalyDetected(minSeverity: Severity!): AnomalyAlert!
+
+  # Slashing events
+  oracleSlashed: SlashingEvent!
+
+  # Pool updates
+  poolUpdated(poolAddress: String!): LiquidityPool!
+  swapExecuted(poolAddress: String!): SwapEvent!
+
+  # Governance
+  proposalCreated: GovernanceProposal!
+  votecast: Vote!
+}
+
+# ==================== TYPES ====================
+
+type AggregatedPrice {
+  tokenId: ID!
+  token: String!
+  price: Decimal!
+  median: Decimal!
+  stdDev: Decimal!
+  confidence: Decimal!
+  timestamp: DateTime!
+  blockNumber: BigInt!
+  sourceCount: Int!
+  sources: [SourcePrice!]!
+  verification: PriceVerification!
+}
+
+type SourcePrice {
+  source: String!
+  price: Decimal!
+  weight: Decimal!
+  timestamp: DateTime!
+}
+
+type PriceVerification {
+  zkProofHash: String
+  signatureHash: String
+  verified: Boolean!
+}
+
+type PricePoint {
+  timestamp: DateTime!
+  price: Decimal!
+  volume: Decimal
+}
+
+type OracleSourceInfo {
+  address: String!
+  name: String
+  reputation: Int!
+  stakedAmount: Decimal!
+  totalReports: Int!
+  validReports: Int!
+  invalidReports: Int!
+  slashedAmount: Decimal!
+  rewardsEarned: Decimal!
+  active: Boolean!
+  suspended: Boolean!
+  registeredAt: DateTime!
+  lastActivity: DateTime!
+  metadata: String
+}
+
+type OracleMetrics {
+  successRate: Decimal!
+  avgReputation: Int!
+  totalSlashed: Decimal!
+  isActive: Boolean!
+  performanceScore: Decimal!
+}
+
+type SlashingEvent {
+  id: ID!
+  oracle: String!
+  tokenId: String!
+  amount: Decimal!
+  reason: String!
+  deviation: Decimal!
+  reportedPrice: Decimal!
+  actualPrice: Decimal!
+  proofHash: String!
+  slasher: String!
+  timestamp: DateTime!
+  blockNumber: BigInt!
+  disputed: Boolean!
+}
+
+type SlashingEventConnection {
+  edges: [SlashingEventEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type SlashingEventEdge {
+  node: SlashingEvent!
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type ZKProofData {
+  id: ID!
+  proofHash: String!
+  publicInputHash: String!
+  commitment: String!
+  proofType: ProofType!
+  prover: String!
+  verified: Boolean!
+  verificationCount: Int!
+  securityLevel: Int!
+  timestamp: DateTime!
+  blockNumber: BigInt!
+  verifiedAt: DateTime
+}
+
+type VerificationResult {
+  valid: Boolean!
+  verifiedBy: [String!]!
+  timestamp: DateTime!
+}
+
+type Commitment {
+  id: ID!
+  commitmentHash: String!
+  dataHash: String!
+  timestamp: DateTime!
+  committer: String!
+  revealed: Boolean!
+  revealedData: String
+  revealedAt: DateTime
+}
+
+type TokenBalance {
+  address: String!
+  token: String!
+  chain: Chain!
+  balance: BigInt!
+  decimals: Int!
+  blockNumber: BigInt!
+  timestamp: DateTime!
+}
+
+type TokenTransfer {
+  id: ID!
+  hash: String!
+  from: String!
+  to: String!
+  token: String!
+  amount: BigInt!
+  chain: Chain!
+  blockNumber: BigInt!
+  timestamp: DateTime!
+  gasUsed: BigInt!
+}
+
+type TokenTransferConnection {
+  edges: [TokenTransferEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TokenTransferEdge {
+  node: TokenTransfer!
+  cursor: String!
+}
+
+type TokenMetadata {
+  address: String!
+  name: String!
+  symbol: String!
+  decimals: Int!
+  totalSupply: BigInt!
+  holders: Int!
+  transfers: Int!
+}
+
+type HolderInfo {
+  address: String!
+  balance: BigInt!
+  rank: Int!
+  percentage: Decimal!
+  firstSeen: DateTime!
+  lastActivity: DateTime!
+  transferCount: Int!
+}
+
+type HolderDistribution {
+  whales: Int!
+  large: Int!
+  medium: Int!
+  small: Int!
+  tiny: Int!
+}
+
+type LiquidityPool {
+  id: ID!
+  address: String!
+  protocol: Protocol!
+  chain: Chain!
+  token0: String!
+  token1: String!
+  reserve0: BigInt!
+  reserve1: BigInt!
+  totalLiquidity: BigInt!
+  fee: Int!
+  volumeUSD: Decimal!
+  tvlUSD: Decimal!
+  apy: Decimal!
+  blockNumber: BigInt!
+  timestamp: DateTime!
+}
+
+type PoolMetrics {
+  pool: String!
+  volume24h: BigInt!
+  volume7d: BigInt!
+  fees24h: BigInt!
+  trades24h: Int!
+  uniqueTraders24h: Int!
+  avgTradeSize: BigInt!
+  priceChange24h: Decimal!
+}
+
+type SwapEvent {
+  id: ID!
+  pool: String!
+  hash: String!
+  sender: String!
+  recipient: String!
+  amount0In: BigInt!
+  amount1In: BigInt!
+  amount0Out: BigInt!
+  amount1Out: BigInt!
+  priceImpact: Decimal!
+  blockNumber: BigInt!
+  timestamp: DateTime!
+}
+
+type LendingRate {
+  id: ID!
+  protocol: LendingProtocol!
+  chain: Chain!
+  asset: String!
+  supplyAPY: Decimal!
+  borrowAPY: Decimal!
+  utilization: Decimal!
+  totalSupply: BigInt!
+  totalBorrow: BigInt!
+  blockNumber: BigInt!
+  timestamp: DateTime!
+}
+
+type ChainSummary {
+  chain: Chain!
+  block: BigInt!
+  timestamp: DateTime!
+  transactions: Int!
+  gasUsed: BigInt!
+  protocols: [ProtocolSummary!]!
+}
+
+type ProtocolSummary {
+  name: String!
+  volume: Decimal!
+  tvl: Decimal!
+  transactions: Int!
+}
+
+type ProtocolAnalytics {
+  protocol: String!
+  chain: Chain!
+  tvl: Decimal!
+  volume24h: Decimal!
+  users24h: Int!
+  transactions24h: Int!
+  metrics: JSON!
+}
+
+type ChainMetrics {
+  chain: Chain!
+  blockNumber: BigInt!
+  transactions: Int!
+  gasUsed: BigInt!
+  avgGasPrice: BigInt!
+}
+
+type AnomalyAlert {
+  id: ID!
+  feedName: String!
+  value: Decimal!
+  expectedRange: [Decimal!]!
+  anomalyScore: Decimal!
+  severity: Severity!
+  recommendation: String!
+  features: JSON!
+  timestamp: DateTime!
+  acknowledged: Boolean!
+}
+
+type GovernanceProposal {
+  id: ID!
+  proposer: String!
+  proposalType: ProposalType!
+  title: String!
+  description: String!
+  data: JSON!
+  forVotes: BigInt!
+  againstVotes: BigInt!
+  status: ProposalStatus!
+  createdAt: DateTime!
+  deadline: DateTime!
+  executedAt: DateTime
+  votes: [Vote!]!
+}
+
+type Vote {
+  id: ID!
+  proposal: GovernanceProposal!
+  voter: String!
+  support: Boolean!
+  weight: BigInt!
+  reason: String
+  timestamp: DateTime!
+}
+
+type Dispute {
+  id: ID!
+  slashingEventId: ID!
+  oracle: String!
+  challenger: String!
+  stake: Decimal!
+  evidence: String!
+  status: DisputeStatus!
+  createdAt: DateTime!
+  resolvedAt: DateTime
+  resolver: String
+}
+
+# ==================== INPUTS ====================
+
+input FeedInput {
+  tokenId: ID!
+  price: Decimal!
+  timestamp: DateTime!
+  confidence: Decimal!
+  zkProof: String!
+  source: String
+}
+
+input OracleRegistration {
+  amount: Decimal!
+  metadata: String
+}
+
+input SlashInput {
+  oracle: String!
+  tokenId: ID!
+  reason: String!
+  deviation: Decimal!
+  proofHash: String!
+}
+
+input ZKProofInput {
+  proofHash: String!
+  publicInputHash: String!
+  commitment: String!
+  proofType: ProofType!
+  starkComponents: STARKComponentsInput!
+}
+
+input STARKComponentsInput {
+  trace: String!
+  constraints: String!
+  friLayers: [String!]!
+  finalPolynomial: String!
+  securityLevel: Int!
+}
+
+input ProposalInput {
+  proposalType: ProposalType!
+  title: String!
+  description: String!
+  data: JSON!
+  deadline: DateTime!
+}
+
+input OracleOverrideInput {
+  feedName: String!
+  overridePrice: Decimal!
+  reason: String!
+  duration: Int!
+}
+
+# ==================== ENUMS ====================
+
+enum Chain {
+  ETHEREUM
+  POLYGON
+  ARBITRUM
+  OPTIMISM
+  BASE
+}
+
+enum Protocol {
+  UNISWAP_V2
+  UNISWAP_V3
+  CURVE
+  BALANCER
+  PANCAKESWAP
+}
+
+enum LendingProtocol {
+  AAVE
+  COMPOUND
+  MAKER
+  EULER
+}
+
+enum TimeInterval {
+  MINUTE
+  HOUR
+  DAY
+  WEEK
+  MONTH
+}
+
+enum PoolOrderBy {
+  TVL_DESC
+  VOLUME_DESC
+  APY_DESC
+  CREATED_DESC
+}
+
+enum OracleSource {
+  CHAINLINK
+  PYTH
+  REDSTONE
+  CUSTOM
+}
+
+enum ProofType {
+  TIMESTAMP
+  DATA_INTEGRITY
+  PRICE_FEED
+  BATCH_COMMITMENT
+  MERKLE_PROOF
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ProposalType {
+  UPDATE_PARAMETERS
+  SLASH_ORACLE
+  EMERGENCY_PAUSE
+  UPGRADE_CONTRACT
+}
+
+enum ProposalStatus {
+  PENDING
+  ACTIVE
+  PASSED
+  REJECTED
+  EXECUTED
+}
+
+enum DisputeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+# ==================== RESULT TYPES ====================
+
+type SubmitFeedResult {
+  success: Boolean!
+  round: BigInt!
+  aggregatedPrice: AggregatedPrice
+  message: String
+}
+
+type BatchSubmitResult {
+  success: Boolean!
+  successfulSubmissions: Int!
+  failedSubmissions: Int!
+  results: [SubmitFeedResult!]!
+}
+
+type RegisterOracleResult {
+  success: Boolean!
+  oracle: OracleSourceInfo!
+  message: String
+}
+
+type DeregisterResult {
+  success: Boolean!
+  returnedStake: Decimal!
+  message: String
+}
+
+type StakeResult {
+  success: Boolean!
+  newStake: Decimal!
+  message: String
+}
+
+type ExecutionResult {
+  success: Boolean!
+  transactionHash: String
+  message: String
+}
+
+type OracleOverride {
+  feedName: String!
+  originalPrice: Decimal!
+  overridePrice: Decimal!
+  appliedAt: DateTime!
+  expiresAt: DateTime!
+  reason: String!
+}

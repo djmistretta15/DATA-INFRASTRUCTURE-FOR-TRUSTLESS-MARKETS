@@ -1,0 +1,260 @@
+version: '3.8'
+
+services:
+  # TimescaleDB for time-series oracle data
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: reclaim-timescaledb
+    environment:
+      POSTGRES_DB: reclaim_oracle
+      POSTGRES_USER: reclaim
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      TIMESCALEDB_TELEMETRY: 'off'
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reclaim"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and real-time data
+  redis:
+    image: redis:7-alpine
+    container_name: reclaim-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Grafana for monitoring dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: reclaim-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-clock-panel
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - reclaim-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: reclaim-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+  # API Server
+  api:
+    build:
+      context: ./analytics-api
+      dockerfile: Dockerfile
+    container_name: reclaim-api
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://reclaim:${POSTGRES_PASSWORD:-changeme}@timescaledb:5432/reclaim_oracle
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      ETHEREUM_RPC: ${ETHEREUM_RPC}
+      POLYGON_RPC: ${POLYGON_RPC}
+      ARBITRUM_RPC: ${ARBITRUM_RPC}
+    ports:
+      - "3000:3000"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # GraphQL API
+  graphql:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: reclaim-graphql
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://reclaim:${POSTGRES_PASSWORD:-changeme}@timescaledb:5432/reclaim_oracle
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+    ports:
+      - "4000:4000"
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+  # WebSocket Server
+  websocket:
+    build:
+      context: ./websocket
+      dockerfile: Dockerfile
+    container_name: reclaim-websocket
+    environment:
+      NODE_ENV: production
+      WS_PORT: 8080
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+  # Token Indexer
+  indexer-token:
+    build:
+      context: ./indexer
+      dockerfile: Dockerfile
+    container_name: reclaim-indexer-token
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://reclaim:${POSTGRES_PASSWORD:-changeme}@timescaledb:5432/reclaim_oracle
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      ETHEREUM_RPC: ${ETHEREUM_RPC}
+      POLYGON_RPC: ${POLYGON_RPC}
+      INDEXER_TYPE: token
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+  # Liquidity Indexer
+  indexer-liquidity:
+    build:
+      context: ./indexer
+      dockerfile: Dockerfile
+    container_name: reclaim-indexer-liquidity
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://reclaim:${POSTGRES_PASSWORD:-changeme}@timescaledb:5432/reclaim_oracle
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      ETHEREUM_RPC: ${ETHEREUM_RPC}
+      INDEXER_TYPE: liquidity
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+  # ML Anomaly Detector
+  ml-detector:
+    build:
+      context: ./ml-anomaly-detector
+      dockerfile: Dockerfile
+    container_name: reclaim-ml-detector
+    environment:
+      PYTHONUNBUFFERED: 1
+      DATABASE_URL: postgresql://reclaim:${POSTGRES_PASSWORD:-changeme}@timescaledb:5432/reclaim_oracle
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      MODEL_PATH: /app/models
+    volumes:
+      - ml-models:/app/models
+    depends_on:
+      - timescaledb
+      - redis
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+  # Frontend Dashboard
+  dashboard:
+    build:
+      context: ./dashboard-visuals
+      dockerfile: Dockerfile
+    container_name: reclaim-dashboard
+    environment:
+      REACT_APP_API_URL: http://api:3000
+      REACT_APP_GRAPHQL_URL: http://graphql:4000/graphql
+      REACT_APP_WS_URL: ws://websocket:8080
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+      - graphql
+      - websocket
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: reclaim-nginx
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+      - graphql
+      - dashboard
+    networks:
+      - reclaim-network
+    restart: unless-stopped
+
+volumes:
+  timescale-data:
+    driver: local
+  redis-data:
+    driver: local
+  grafana-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  ml-models:
+    driver: local
+
+networks:
+  reclaim-network:
+    driver: bridge

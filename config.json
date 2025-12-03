@@ -1,0 +1,74 @@
+{
+  "oracle": {
+    "sources": {
+      "chainlink": {
+        "enabled": true,
+        "weight": 0.3,
+        "endpoints": {
+          "ethereum": "https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY",
+          "polygon": "https://polygon-mainnet.g.alchemy.com/v2/YOUR_API_KEY"
+        }
+      },
+      "pyth": {
+        "enabled": true,
+        "weight": 0.3,
+        "endpoint": "https://xc-mainnet.pyth.network"
+      },
+      "redstone": {
+        "enabled": true,
+        "weight": 0.2,
+        "endpoint": "https://api.redstone.finance"
+      },
+      "custom": {
+        "enabled": true,
+        "weight": 0.2,
+        "endpoints": []
+      }
+    },
+    "aggregation": {
+      "method": "median",
+      "stdDevCap": 2.5,
+      "minSources": 2,
+      "maxPriceDeviation": 0.05
+    },
+    "slashing": {
+      "enabled": true,
+      "threshold": 0.1,
+      "penaltyAmount": 1000
+    }
+  },
+  "indexer": {
+    "chains": ["ethereum", "polygon", "arbitrum", "optimism", "base"],
+    "startBlock": "latest",
+    "batchSize": 100,
+    "snapshotInterval": 1000,
+    "protocols": ["uniswap", "aave", "compound", "curve"]
+  },
+  "attestation": {
+    "zkEnabled": true,
+    "signatureAlgorithm": "ECDSA",
+    "commitmentScheme": "Poseidon"
+  },
+  "ml": {
+    "anomalyThreshold": 0.85,
+    "modelType": "IsolationForest",
+    "trainingInterval": "24h",
+    "features": ["price", "volume", "volatility", "liquidity"]
+  },
+  "api": {
+    "port": 3000,
+    "rateLimit": {
+      "windowMs": 60000,
+      "max": 100
+    },
+    "cache": {
+      "enabled": true,
+      "ttl": 60
+    }
+  },
+  "monitoring": {
+    "enabled": true,
+    "metricsPort": 9090,
+    "healthCheckInterval": 30
+  }
+}
